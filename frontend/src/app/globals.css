@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-tertiary: #334155;
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --accent-blue: #3b82f6;
+  --accent-green: #10b981;
+  --accent-yellow: #f59e0b;
+  --accent-red: #ef4444;
+  --accent-purple: #8b5cf6;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.grid-cell {
+  @apply w-8 h-8 border border-slate-700 cursor-pointer transition-colors duration-150;
+}
+
+.grid-cell:hover {
+  @apply ring-2 ring-blue-400 ring-offset-1 ring-offset-slate-900;
+}
+
+.cell-empty { background-color: #f0f0f0; }
+.cell-obstacle { background-color: #374151; }
+.cell-resource { background-color: #10b981; }
+.cell-spawn { background-color: #3b82f6; }
+.cell-target { background-color: #f59e0b; }
+.cell-agent-0 { background-color: #3b82f6; }
+.cell-agent-1 { background-color: #ef4444; }
+.cell-agent-2 { background-color: #10b981; }
+.cell-agent-3 { background-color: #f59e0b; }
+
+.card {
+  @apply bg-slate-800 rounded-lg p-4 border border-slate-700;
+}
+
+.btn-primary {
+  @apply bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors;
+}
+
+.btn-secondary {
+  @apply bg-slate-600 hover:bg-slate-500 text-white px-4 py-2 rounded-lg font-medium transition-colors;
+}
+
+.btn-danger {
+  @apply bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium transition-colors;
+}
+
+.btn-success {
+  @apply bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors;
+}
+
+.input-field {
+  @apply bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500;
+}
+
+.select-field {
+  @apply bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500;
+}
