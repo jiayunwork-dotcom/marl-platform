@@ -1,3 +1,4 @@
+import ast
 import json
 import torch
 import numpy as np
@@ -11,6 +12,28 @@ from app.schemas.schemas import ExperimentCreate, ExperimentResponse, TrainingLo
 from app.services.training import TrainingManager, TrainingTask, training_manager
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
+
+
+def _safe_parse_json(value):
+    """Robust JSON parsing that also handles Python dict repr (single quotes)."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 @router.post("", response_model=ExperimentResponse)
@@ -61,7 +84,7 @@ async def start_training(exp_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Environment not found")
 
     env_config = {
-        "map_config": env.map_config if isinstance(env.map_config, dict) else json.loads(env.map_config),
+        "map_config": _safe_parse_json(env.map_config),
         "max_steps": env.max_steps,
         "obs_range": env.obs_range,
         "action_space": env.action_space,
@@ -69,7 +92,7 @@ async def start_training(exp_id: int, db: AsyncSession = Depends(get_db)):
         "resource_refresh": env.resource_refresh,
         "resource_refresh_interval": env.resource_refresh_interval,
         "agent_count": env.agent_count,
-        "team_config": env.team_config if isinstance(env.team_config, dict) else json.loads(env.team_config),
+        "team_config": _safe_parse_json(env.team_config),
         "reward_goal": env.reward_goal,
         "reward_resource": env.reward_resource,
         "reward_collision": env.reward_collision,
@@ -80,7 +103,9 @@ async def start_training(exp_id: int, db: AsyncSession = Depends(get_db)):
         "reward_timeout": env.reward_timeout,
     }
 
-    algo_config = exp.hyperparams if isinstance(exp.hyperparams, dict) else json.loads(exp.hyperparams)
+    algo_config = _safe_parse_json(exp.hyperparams)
+    if "algorithm" not in algo_config:
+        algo_config["algorithm"] = exp.algorithm
 
     task = TrainingTask(exp_id, env_config, algo_config, exp.total_episodes)
     exp.status = "queued"

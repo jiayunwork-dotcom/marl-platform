@@ -1,3 +1,4 @@
+import ast
 import json
 import numpy as np
 from datetime import datetime
@@ -5,6 +6,25 @@ from scipy import stats as scipy_stats
 from app.core.database import async_session
 from app.models.models import Experiment, TrainingLog, Environment
 from sqlalchemy import select
+
+
+def _safe_parse_json(value):
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 async def generate_comparison_report(experiment_ids: list[int]) -> dict:
@@ -62,7 +82,7 @@ def _compute_config_diff(experiments: list) -> dict:
     all_keys = set()
     configs = []
     for exp in experiments:
-        hp = exp.hyperparams if isinstance(exp.hyperparams, dict) else json.loads(exp.hyperparams)
+        hp = _safe_parse_json(exp.hyperparams)
         configs.append(hp)
         all_keys.update(hp.keys())
 

@@ -1,3 +1,4 @@
+import ast
 import json
 import numpy as np
 import torch
@@ -13,6 +14,25 @@ from app.core.environment import GridWorldEnv
 from app.algorithms.factory import create_algorithm
 
 router = APIRouter(prefix="/api/visualization", tags=["visualization"])
+
+
+def _safe_parse_json(value):
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 @router.get("/{exp_id}/trajectory-heatmap")
@@ -76,8 +96,10 @@ async def get_q_value_map(exp_id: int, agent_id: int = 0, db: AsyncSession = Dep
     if not latest_ckpt:
         raise HTTPException(404, "No checkpoint found")
 
-    map_config = env_row.map_config if isinstance(env_row.map_config, dict) else json.loads(env_row.map_config)
-    algo_config = exp.hyperparams if isinstance(exp.hyperparams, dict) else json.loads(exp.hyperparams) if exp.hyperparams else {}
+    map_config = _safe_parse_json(env_row.map_config)
+    algo_config = _safe_parse_json(exp.hyperparams)
+    if "algorithm" not in algo_config:
+        algo_config["algorithm"] = exp.algorithm
 
     width, height = map_config["width"], map_config["height"]
 
@@ -90,7 +112,7 @@ async def get_q_value_map(exp_id: int, agent_id: int = 0, db: AsyncSession = Dep
         resource_refresh=env_row.resource_refresh,
         resource_refresh_interval=env_row.resource_refresh_interval,
         agent_count=env_row.agent_count,
-        team_config=env_row.team_config if isinstance(env_row.team_config, dict) else json.loads(env_row.team_config),
+        team_config=_safe_parse_json(env_row.team_config),
     )
 
     obs_shape = env.get_obs_shape()
@@ -134,7 +156,7 @@ async def get_learning_curves(exp_id: int, db: AsyncSession = Depends(get_db)):
     total_rewards = [l.total_reward for l in log_list]
     steps = [l.steps for l in log_list]
     win_rates = [l.win_rate for l in log_list]
-    agent_rewards = [l.agent_rewards if isinstance(l.agent_rewards, dict) else json.loads(l.agent_rewards) for l in log_list]
+    agent_rewards = [_safe_parse_json(l.agent_rewards) for l in log_list]
 
     return {
         "episodes": episodes,

@@ -1,3 +1,4 @@
+from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
@@ -10,7 +11,7 @@ class Environment(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(sa.String(200))
     description: Mapped[str] = mapped_column(sa.Text, default="")
-    map_config: Mapped[str] = mapped_column(sa.JSON)
+    map_config: Mapped[dict[str, Any]] = mapped_column(sa.JSON)
     width: Mapped[int] = mapped_column(sa.Integer)
     height: Mapped[int] = mapped_column(sa.Integer)
     max_steps: Mapped[int] = mapped_column(sa.Integer, default=100)
@@ -29,7 +30,7 @@ class Environment(Base):
     reward_timeout: Mapped[float] = mapped_column(sa.Float, default=-5.0)
     scenario_type: Mapped[str] = mapped_column(sa.String(50), default="custom")
     agent_count: Mapped[int] = mapped_column(sa.Integer, default=2)
-    team_config: Mapped[str] = mapped_column(sa.JSON, default="{}")
+    team_config: Mapped[dict[str, Any]] = mapped_column(sa.JSON, default_factory=dict)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
 
 
@@ -40,7 +41,7 @@ class Experiment(Base):
     name: Mapped[str] = mapped_column(sa.String(200))
     environment_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("environments.id"))
     algorithm: Mapped[str] = mapped_column(sa.String(50))
-    hyperparams: Mapped[str] = mapped_column(sa.JSON)
+    hyperparams: Mapped[dict[str, Any]] = mapped_column(sa.JSON)
     communication_enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False)
     status: Mapped[str] = mapped_column(sa.String(50), default="created")
     current_episode: Mapped[int] = mapped_column(sa.Integer, default=0)
@@ -57,7 +58,7 @@ class TrainingLog(Base):
     experiment_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("experiments.id"))
     episode: Mapped[int] = mapped_column(sa.Integer)
     total_reward: Mapped[float] = mapped_column(sa.Float)
-    agent_rewards: Mapped[str] = mapped_column(sa.JSON)
+    agent_rewards: Mapped[dict[str, Any]] = mapped_column(sa.JSON)
     steps: Mapped[int] = mapped_column(sa.Integer)
     goal_reached: Mapped[bool] = mapped_column(sa.Boolean, default=False)
     win_rate: Mapped[float] = mapped_column(sa.Float, default=0.0)
@@ -84,5 +85,5 @@ class Evaluation(Base):
     success_rate: Mapped[float] = mapped_column(sa.Float)
     collision_rate: Mapped[float] = mapped_column(sa.Float)
     avg_steps: Mapped[float] = mapped_column(sa.Float)
-    episode_data: Mapped[str] = mapped_column(sa.JSON, default="[]")
+    episode_data: Mapped[list[Any]] = mapped_column(sa.JSON, default_factory=list)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)

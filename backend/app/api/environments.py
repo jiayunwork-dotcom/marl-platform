@@ -1,3 +1,4 @@
+import ast
 import json
 import os
 import torch
@@ -16,6 +17,25 @@ from app.core.presets import PRESET_GENERATORS
 from app.core.config import settings
 
 router = APIRouter(prefix="/api/environments", tags=["environments"])
+
+
+def _safe_parse_json(value):
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 @router.post("", response_model=EnvironmentResponse)
@@ -122,7 +142,7 @@ async def save_map(env_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Environment not found")
     filepath = os.path.join(settings.MAP_SAVE_DIR, f"env_{env_id}_map.json")
     with open(filepath, "w") as f:
-        json.dump(env.map_config, f, indent=2)
+        json.dump(_safe_parse_json(env.map_config), f, indent=2)
     return {"filepath": filepath, "status": "saved"}
 
 

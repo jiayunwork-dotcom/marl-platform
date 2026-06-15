@@ -1,3 +1,4 @@
+import ast
 import torch
 import numpy as np
 import json
@@ -8,6 +9,25 @@ from app.core.config import settings
 from app.core.database import async_session
 from app.models.models import Experiment, Evaluation, Checkpoint, Environment
 from sqlalchemy import select
+
+
+def _safe_parse_json(value):
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return {}
+        try:
+            return json.loads(value)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(value)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 async def run_evaluation(experiment_id: int, num_episodes: int = 10) -> dict:
@@ -28,9 +48,11 @@ async def run_evaluation(experiment_id: int, num_episodes: int = 10) -> dict:
         if not latest_ckpt:
             raise ValueError(f"No checkpoint found for experiment {experiment_id}")
 
-        algo_config = exp.hyperparams if isinstance(exp.hyperparams, dict) else json.loads(exp.hyperparams)
+        algo_config = _safe_parse_json(exp.hyperparams)
+        if "algorithm" not in algo_config:
+            algo_config["algorithm"] = exp.algorithm
         env_data = {
-            "map_config": env_row.map_config if isinstance(env_row.map_config, dict) else json.loads(env_row.map_config),
+            "map_config": _safe_parse_json(env_row.map_config),
             "max_steps": env_row.max_steps,
             "obs_range": env_row.obs_range,
             "action_space": env_row.action_space,
@@ -38,7 +60,7 @@ async def run_evaluation(experiment_id: int, num_episodes: int = 10) -> dict:
             "resource_refresh": env_row.resource_refresh,
             "resource_refresh_interval": env_row.resource_refresh_interval,
             "agent_count": env_row.agent_count,
-            "team_config": env_row.team_config if isinstance(env_row.team_config, dict) else json.loads(env_row.team_config),
+            "team_config": _safe_parse_json(env_row.team_config),
             "reward_goal": env_row.reward_goal,
             "reward_resource": env_row.reward_resource,
             "reward_collision": env_row.reward_collision,
