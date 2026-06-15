@@ -1,6 +1,50 @@
-from pydantic import BaseModel, Field
+from __future__ import annotations
+
+import ast
+import json
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Any
 from datetime import datetime
+
+
+def _coerce_json_dict(value: Any) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return {}
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                parsed = ast.literal_eval(s)
+                return parsed if isinstance(parsed, dict) else {}
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
+
+
+def _coerce_json_list(value: Any) -> list:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return []
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                parsed = ast.literal_eval(s)
+                return parsed if isinstance(parsed, list) else []
+            except (ValueError, SyntaxError):
+                return []
+    return []
 
 
 class CellConfig(BaseModel):
@@ -65,8 +109,15 @@ class EnvironmentResponse(BaseModel):
     team_config: dict
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    @field_validator("map_config", mode="before")
+    @classmethod
+    def _mc(cls, v): return _coerce_json_dict(v)
+
+    @field_validator("team_config", mode="before")
+    @classmethod
+    def _tc(cls, v): return _coerce_json_dict(v)
+
+    model_config = {"from_attributes": True}
 
 
 class AlgorithmConfig(BaseModel):
@@ -107,8 +158,11 @@ class ExperimentResponse(BaseModel):
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    @field_validator("hyperparams", mode="before")
+    @classmethod
+    def _hp(cls, v): return _coerce_json_dict(v)
+
+    model_config = {"from_attributes": True}
 
 
 class TrainingLogResponse(BaseModel):
@@ -122,8 +176,11 @@ class TrainingLogResponse(BaseModel):
     win_rate: float
     timestamp: datetime
 
-    class Config:
-        from_attributes = True
+    @field_validator("agent_rewards", mode="before")
+    @classmethod
+    def _ar(cls, v): return _coerce_json_dict(v)
+
+    model_config = {"from_attributes": True}
 
 
 class EvaluationCreate(BaseModel):
@@ -142,8 +199,11 @@ class EvaluationResponse(BaseModel):
     episode_data: list
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    @field_validator("episode_data", mode="before")
+    @classmethod
+    def _ed(cls, v): return _coerce_json_list(v)
+
+    model_config = {"from_attributes": True}
 
 
 class CheckpointResponse(BaseModel):
@@ -153,8 +213,7 @@ class CheckpointResponse(BaseModel):
     filepath: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ComparisonRequest(BaseModel):

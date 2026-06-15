@@ -1,6 +1,8 @@
 import asyncio
+import ast
 import json
 import os
+import logging
 import torch
 import numpy as np
 from datetime import datetime
@@ -14,6 +16,30 @@ from app.algorithms.factory import create_algorithm
 from app.algorithms.communication.comm import CommModule
 from app.models.models import Experiment, TrainingLog, Checkpoint, Environment
 from app.core.database import async_session
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_parse_json(value):
+    """Robust JSON parsing with Python repr fallback."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return {}
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(s)
+            except (ValueError, SyntaxError):
+                return {}
+    return {}
 
 
 class TrainingTask:
@@ -79,9 +105,31 @@ class TrainingManager:
 
     async def _run_task(self, task: TrainingTask):
         try:
-            env_config = task.env_config
-            algo_config = task.algorithm_config
-            algorithm_name = algo_config["algorithm"]
+            env_config = task.env_config or {}
+            algo_config = _safe_parse_json(task.algorithm_config)
+
+            # --- Resolve algorithm name with multiple fallbacks ---
+            async with async_session() as session:
+                exp_for_name = await session.get(Experiment, task.experiment_id)
+            stored_algorithm = exp_for_name.algorithm if exp_for_name else None
+            algorithm_name = (
+                algo_config.get("algorithm")
+                or algo_config.get("algo")
+                or stored_algorithm
+            )
+            if not algorithm_name:
+                raise ValueError(
+                    f"No algorithm name could be resolved for experiment {task.experiment_id}. "
+                    f"algo_config keys: {list(algo_config.keys())}, "
+                    f"stored.algorithm={stored_algorithm!r}"
+                )
+            # Make the algorithm name visible to the algorithm class (e.g. epsilon logic)
+            algo_config.setdefault("algorithm", algorithm_name)
+
+            logger.info(
+                "Starting training task exp=%s algo=%s total_episodes=%s",
+                task.experiment_id, algorithm_name, task.total_episodes,
+            )
 
             rewards = {
                 "goal": env_config.get("reward_goal", 10.0),
@@ -94,8 +142,26 @@ class TrainingManager:
                 "timeout": env_config.get("reward_timeout", -5.0),
             }
 
+            # --- Resolve env map_config from DB as fallback ---
+            if "map_config" not in env_config or not env_config.get("map_config"):
+                if exp_for_name:
+                    async with async_session() as session:
+                        env_row = await session.get(Environment, exp_for_name.environment_id)
+                        if env_row:
+                            env_config["map_config"] = _safe_parse_json(env_row.map_config)
+                            env_config.setdefault("agent_count", env_row.agent_count)
+                            env_config.setdefault("max_steps", env_row.max_steps)
+                            env_config.setdefault("obs_range", env_row.obs_range)
+                            env_config.setdefault("action_space", env_row.action_space)
+
+            map_config = env_config.get("map_config")
+            if not map_config or not isinstance(map_config, dict):
+                raise ValueError(
+                    f"Invalid map_config for experiment {task.experiment_id}: {map_config!r}"
+                )
+
             env = GridWorldEnv(
-                map_config=env_config["map_config"],
+                map_config=map_config,
                 max_steps=env_config.get("max_steps", 100),
                 obs_range=env_config.get("obs_range", -1),
                 action_space=env_config.get("action_space", 5),
