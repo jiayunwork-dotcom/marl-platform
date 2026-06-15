@@ -90,3 +90,31 @@ class Evaluation(Base):
     avg_steps: Mapped[float] = mapped_column(sa.Float)
     episode_data: Mapped[list[Any]] = mapped_column(sa.JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+
+class PolicyService(Base):
+    __tablename__ = "policy_services"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(sa.String(200))
+    experiment_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("experiments.id"))
+    checkpoint_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("checkpoints.id"))
+    max_concurrent: Mapped[int] = mapped_column(sa.Integer, default=10)
+    timeout_ms: Mapped[int] = mapped_column(sa.Integer, default=5000)
+    status: Mapped[str] = mapped_column(sa.String(50), default="created")
+    error_reason: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    started_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
+    stopped_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
+
+
+class InferenceLog(Base):
+    __tablename__ = "inference_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    policy_service_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("policy_services.id"))
+    request_time: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    latency_ms: Mapped[float] = mapped_column(sa.Float)
+    obs_dimensions: Mapped[str] = mapped_column(sa.String(200), default="")
+    output_actions: Mapped[str] = mapped_column(sa.String(500), default="")
+    is_timeout: Mapped[bool] = mapped_column(sa.Boolean, default=False)

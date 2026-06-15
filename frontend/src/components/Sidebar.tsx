@@ -10,6 +10,7 @@ const navItems = [
   { href: '/evaluation', label: '评估回放', icon: '▶️' },
   { href: '/visualization', label: '可视化分析', icon: '🔍' },
   { href: '/reports', label: '对比报告', icon: '📄' },
+  { href: '/deployment', label: '策略部署', icon: '🚀' },
 ];
 
 export default function NavSidebar() {

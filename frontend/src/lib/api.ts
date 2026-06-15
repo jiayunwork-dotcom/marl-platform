@@ -60,4 +60,21 @@ export const algorithmApi = {
   list: () => api.get('/api/algorithms'),
 };
 
+export const policyApi = {
+  list: () => api.get('/api/policies'),
+  get: (id: number) => api.get(`/api/policies/${id}`),
+  create: (data: any) => api.post('/api/policies', data),
+  start: (id: number) => api.post(`/api/policies/${id}/start`),
+  stop: (id: number) => api.post(`/api/policies/${id}/stop`),
+  delete: (id: number) => api.delete(`/api/policies/${id}`),
+  infer: (id: number, data: any) => api.post(`/api/policies/${id}/infer`, data),
+  getLogs: (id: number, offset = 0, limit = 50, startTime?: string, endTime?: string) => {
+    let url = `/api/policies/${id}/logs?offset=${offset}&limit=${limit}`;
+    if (startTime) url += `&start_time=${encodeURIComponent(startTime)}`;
+    if (endTime) url += `&end_time=${encodeURIComponent(endTime)}`;
+    return api.get(url);
+  },
+  getStats: (id: number) => api.get(`/api/policies/${id}/stats`),
+};
+
 export default api;

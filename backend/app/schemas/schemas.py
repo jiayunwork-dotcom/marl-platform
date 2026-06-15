@@ -230,3 +230,57 @@ class PresetScenarioRequest(BaseModel):
     map_size: int = Field(default=10, ge=5, le=30)
     agent_count: int = Field(default=4, ge=2, le=8)
     team_config: Optional[dict[str, Any]] = None
+
+
+class PolicyServiceCreate(BaseModel):
+    name: str
+    experiment_id: int
+    checkpoint_id: int
+    max_concurrent: int = Field(default=10, ge=1, le=100)
+    timeout_ms: int = Field(default=5000, ge=100, le=60000)
+
+
+class PolicyServiceResponse(BaseModel):
+    id: int
+    name: str
+    experiment_id: int
+    checkpoint_id: int
+    max_concurrent: int
+    timeout_ms: int
+    status: str
+    error_reason: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    stopped_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+class InferenceRequest(BaseModel):
+    observations: list[list[float]]
+    communication_context: Optional[list[float]] = None
+
+
+class InferenceResponse(BaseModel):
+    actions: list[int]
+    q_values: Optional[list[list[float]]] = None
+
+
+class InferenceLogResponse(BaseModel):
+    id: int
+    policy_service_id: int
+    request_time: datetime
+    latency_ms: float
+    obs_dimensions: str
+    output_actions: str
+    is_timeout: bool
+
+    model_config = {"from_attributes": True}
+
+
+class InferenceStatsResponse(BaseModel):
+    total_count: int
+    avg_latency_ms: float
+    p95_latency_ms: float
+    timeout_rate: float
+    qps_last_hour: float

@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_TRAINING: int = 2
     MAX_CHECKPOINTS: int = 10
     CHECKPOINT_INTERVAL: int = 100
+    POLICY_HEALTH_CHECK_INTERVAL: int = 30
+    POLICY_HEALTH_CHECK_FAILURE_THRESHOLD: int = 3
 
     class Config:
         env_file = ".env"

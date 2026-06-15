@@ -156,3 +156,49 @@ export interface CompareCurveItem {
   total_rewards: number[];
   win_rates: number[];
 }
+
+export interface PolicyService {
+  id: number;
+  name: string;
+  experiment_id: number;
+  checkpoint_id: number;
+  max_concurrent: number;
+  timeout_ms: number;
+  status: 'created' | 'deploying' | 'running' | 'stopped' | 'error';
+  error_reason: string | null;
+  created_at: string;
+  started_at: string | null;
+  stopped_at: string | null;
+}
+
+export interface InferenceLog {
+  id: number;
+  policy_service_id: number;
+  request_time: string;
+  latency_ms: number;
+  obs_dimensions: string;
+  output_actions: string;
+  is_timeout: boolean;
+}
+
+export interface InferenceLogsResponse {
+  total_count: number;
+  offset: number;
+  limit: number;
+  logs: InferenceLog[];
+}
+
+export interface InferenceStats {
+  total_count: number;
+  avg_latency_ms: number;
+  p95_latency_ms: number;
+  timeout_rate: number;
+  qps_last_hour: number;
+}
+
+export interface CheckpointItem {
+  id: number;
+  episode: number;
+  filepath: string;
+  created_at: string;
+}
