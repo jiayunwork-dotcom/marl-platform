@@ -62,10 +62,10 @@ class GridWorldEnv:
         self.spawn_positions = []
         self.target_positions = []
         self.resource_positions = []
-        self._parse_map_config(map_config)
-
         self.agent_positions = []
         self.agent_teams = []
+        self._parse_map_config(map_config)
+
         self.step_count = 0
         self.resource_timers = {}
         self.resource_collected = set()
@@ -100,6 +100,8 @@ class GridWorldEnv:
         self.agent_positions = list(self.spawn_positions[:self.agent_count])
         while len(self.agent_positions) < self.agent_count:
             self.agent_positions.append((0, 0))
+        while len(self.agent_teams) < self.agent_count:
+            self.agent_teams.append(0)
         self.step_count = 0
         self.resource_timers = {}
         self.resource_collected = set()

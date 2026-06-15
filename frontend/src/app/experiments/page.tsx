@@ -83,6 +83,9 @@ export default function ExperimentsPage() {
   };
 
   const selectedAlgo = algorithms.find((a) => a.id === algoConfig.algorithm);
+  const isOffPolicy = selectedAlgo?.off_policy !== false;
+  const isValueBased = ['IQL', 'DQN', 'VDN', 'QMIX'].includes(algoConfig.algorithm);
+  const supportsComm = selectedAlgo?.supports_comm === true;
 
   return (
     <div>
@@ -173,33 +176,41 @@ export default function ExperimentsPage() {
                       className="input-field w-full mt-1" />
                   </div>
                   <div>
-                    <label className="text-sm text-slate-400">经验回放池大小</label>
-                    <input type="number" value={algoConfig.replay_buffer_size}
-                      onChange={(e) => setAlgoConfig((p) => ({ ...p, replay_buffer_size: parseInt(e.target.value) }))}
-                      className="input-field w-full mt-1" />
-                  </div>
-                  <div>
                     <label className="text-sm text-slate-400">Batch Size</label>
                     <input type="number" value={algoConfig.batch_size}
                       onChange={(e) => setAlgoConfig((p) => ({ ...p, batch_size: parseInt(e.target.value) }))}
                       className="input-field w-full mt-1" />
                   </div>
-                  <div>
-                    <label className="text-sm text-slate-400">目标网络更新频率</label>
-                    <input type="number" value={algoConfig.target_update_freq}
-                      onChange={(e) => setAlgoConfig((p) => ({ ...p, target_update_freq: parseInt(e.target.value) }))}
-                      className="input-field w-full mt-1" />
-                  </div>
-                  <div>
-                    <label className="text-sm text-slate-400">ε 衰减步数</label>
-                    <input type="number" value={algoConfig.epsilon_decay_steps}
-                      onChange={(e) => setAlgoConfig((p) => ({ ...p, epsilon_decay_steps: parseInt(e.target.value) }))}
-                      className="input-field w-full mt-1" />
-                  </div>
+
+                  {isOffPolicy && (
+                    <>
+                      <div>
+                        <label className="text-sm text-slate-400">经验回放池大小</label>
+                        <input type="number" value={algoConfig.replay_buffer_size}
+                          onChange={(e) => setAlgoConfig((p) => ({ ...p, replay_buffer_size: parseInt(e.target.value) }))}
+                          className="input-field w-full mt-1" />
+                      </div>
+                      <div>
+                        <label className="text-sm text-slate-400">目标网络更新频率</label>
+                        <input type="number" value={algoConfig.target_update_freq}
+                          onChange={(e) => setAlgoConfig((p) => ({ ...p, target_update_freq: parseInt(e.target.value) }))}
+                          className="input-field w-full mt-1" />
+                      </div>
+                    </>
+                  )}
+
+                  {isValueBased && (
+                    <div className="col-span-2">
+                      <label className="text-sm text-slate-400">ε-greedy 衰减步数（从 1.0 → 0.05）</label>
+                      <input type="number" value={algoConfig.epsilon_decay_steps}
+                        onChange={(e) => setAlgoConfig((p) => ({ ...p, epsilon_decay_steps: parseInt(e.target.value) }))}
+                        className="input-field w-full mt-1" />
+                    </div>
+                  )}
 
                   {algoConfig.algorithm === 'QMIX' && (
-                    <div>
-                      <label className="text-sm text-slate-400">混合网络隐藏层维度</label>
+                    <div className="col-span-2">
+                      <label className="text-sm text-slate-400">QMIX 混合网络隐藏层维度</label>
                       <input type="number" value={algoConfig.qmix_hidden_dim}
                         onChange={(e) => setAlgoConfig((p) => ({ ...p, qmix_hidden_dim: parseInt(e.target.value) }))}
                         className="input-field w-full mt-1" />
@@ -209,7 +220,7 @@ export default function ExperimentsPage() {
                   {algoConfig.algorithm === 'MAPPO' && (
                     <>
                       <div>
-                        <label className="text-sm text-slate-400">Clip 参数</label>
+                        <label className="text-sm text-slate-400">PPO Clip 参数</label>
                         <input type="number" step="0.01" value={algoConfig.mappo_clip}
                           onChange={(e) => setAlgoConfig((p) => ({ ...p, mappo_clip: parseFloat(e.target.value) }))}
                           className="input-field w-full mt-1" />
@@ -223,16 +234,16 @@ export default function ExperimentsPage() {
                     </>
                   )}
 
-                  {(algoConfig.algorithm === 'QMIX' || algoConfig.algorithm === 'MAPPO') && (
+                  {supportsComm && (
                     <>
                       <div className="col-span-2 flex items-center gap-3">
-                        <label className="text-sm text-slate-400">启用通信</label>
+                        <label className="text-sm text-slate-400">启用智能体间通信</label>
                         <input type="checkbox" checked={algoConfig.communication_enabled}
                           onChange={(e) => setAlgoConfig((p) => ({ ...p, communication_enabled: e.target.checked }))} />
                       </div>
                       {algoConfig.communication_enabled && (
                         <div>
-                          <label className="text-sm text-slate-400">消息维度</label>
+                          <label className="text-sm text-slate-400">消息向量维度</label>
                           <input type="number" value={algoConfig.comm_dim}
                             onChange={(e) => setAlgoConfig((p) => ({ ...p, comm_dim: parseInt(e.target.value) }))}
                             className="input-field w-full mt-1" />

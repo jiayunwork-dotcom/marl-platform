@@ -116,10 +116,38 @@ export default function EnvironmentsPage() {
   const handleSaveMap = async () => {
     if (!selected) return;
     try {
-      await environmentApi.saveMap(selected.id);
-      alert('地图已保存');
+      await environmentApi.update(selected.id, {
+        name: selected.name,
+        description: selected.description,
+        map_config: mapConfig,
+        max_steps: maxSteps,
+        obs_range: obsRange,
+        action_space: actionSpace,
+        collision_rule: collisionRule,
+        resource_refresh: resourceRefresh,
+        resource_refresh_interval: refreshInterval,
+        reward_goal: rewards.goal,
+        reward_resource: rewards.resource,
+        reward_collision: rewards.collision,
+        reward_wall: rewards.wall,
+        reward_step: rewards.step,
+        reward_catch_predator: rewards.catch_predator,
+        reward_catch_prey: rewards.catch_prey,
+        reward_timeout: rewards.timeout,
+        scenario_type: selected.scenario_type,
+        agent_count: agentCount,
+        team_config: selected.team_config,
+      });
+      try {
+        await environmentApi.saveMap(selected.id);
+      } catch (_) { /* optional JSON file save */ }
+      await fetchEnvs();
+      const refreshed = await environmentApi.get(selected.id);
+      setSelected(refreshed.data);
+      alert('环境已保存');
     } catch (e) {
       console.error(e);
+      alert('保存失败');
     }
   };
 
@@ -180,7 +208,7 @@ export default function EnvironmentsPage() {
                 <input type="number" min={5} max={30} value={mapHeight} onChange={(e) => setMapHeight(parseInt(e.target.value))} className="input-field w-20 ml-2" />
               </div>
               <button onClick={handleResize} className="btn-secondary text-sm">应用尺寸</button>
-              {selected && <button onClick={handleSaveMap} className="btn-secondary text-sm">保存地图JSON</button>}
+              {selected && <button onClick={handleSaveMap} className="btn-primary text-sm">保存修改</button>}
             </div>
             <GridEditor mapConfig={mapConfig} onChange={setMapConfig} />
           </div>
