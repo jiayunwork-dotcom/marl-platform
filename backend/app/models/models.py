@@ -51,6 +51,7 @@ class Experiment(Base):
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
     started_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
     finished_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
+    summary: Mapped[Optional[dict[str, Any]]] = mapped_column(sa.JSON, nullable=True, default=None)
 
 
 class TrainingLog(Base):

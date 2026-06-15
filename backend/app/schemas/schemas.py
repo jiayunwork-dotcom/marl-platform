@@ -157,10 +157,15 @@ class ExperimentResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    summary: Optional[dict[str, Any]] = None
 
     @field_validator("hyperparams", mode="before")
     @classmethod
     def _hp(cls, v): return _coerce_json_dict(v)
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def _sm(cls, v): return _coerce_json_dict(v)
 
     model_config = {"from_attributes": True}
 

@@ -63,6 +63,13 @@ export interface AlgorithmConfig {
   comm_dim: number;
 }
 
+export interface TrainingSummary {
+  final_avg_reward: number;
+  max_episode_reward: number;
+  convergence_episode: number | null;
+  total_duration_seconds: number | null;
+}
+
 export interface Experiment {
   id: number;
   name: string;
@@ -76,6 +83,7 @@ export interface Experiment {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  summary: TrainingSummary | null;
 }
 
 export interface TrainingLog {
@@ -123,4 +131,28 @@ export interface TrainingProgress {
   current_episode: number;
   total_episodes: number;
   recent_data: any[];
+}
+
+export interface LearningCurveData {
+  total_count: number;
+  episodes: number[];
+  total_rewards: number[];
+  steps: number[];
+  win_rates: number[];
+  agent_rewards: Record<string, number>[];
+}
+
+export interface LogsResponse {
+  total_count: number;
+  offset: number;
+  limit: number;
+  logs: TrainingLog[];
+}
+
+export interface CompareCurveItem {
+  name: string;
+  algorithm: string;
+  episodes: number[];
+  total_rewards: number[];
+  win_rates: number[];
 }

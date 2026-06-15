@@ -23,7 +23,12 @@ export const experimentApi = {
   pause: (id: number) => api.post(`/api/experiments/${id}/pause`),
   resume: (id: number) => api.post(`/api/experiments/${id}/resume`),
   stop: (id: number) => api.post(`/api/experiments/${id}/stop`),
-  getLogs: (id: number, skip = 0, limit = 100) => api.get(`/api/experiments/${id}/logs?skip=${skip}&limit=${limit}`),
+  getLogs: (id: number, offset = 0, limit = 100, minEpisode?: number, maxEpisode?: number) => {
+    let url = `/api/experiments/${id}/logs?offset=${offset}&limit=${limit}`;
+    if (minEpisode !== undefined) url += `&min_episode=${minEpisode}`;
+    if (maxEpisode !== undefined) url += `&max_episode=${maxEpisode}`;
+    return api.get(url);
+  },
   getProgress: (id: number) => api.get(`/api/experiments/${id}/progress`),
   getCheckpoints: (id: number) => api.get(`/api/experiments/${id}/checkpoints`),
 };
@@ -38,7 +43,11 @@ export const evaluationApi = {
 export const visualizationApi = {
   getTrajectoryHeatmap: (expId: number) => api.get(`/api/visualization/${expId}/trajectory-heatmap`),
   getQValueMap: (expId: number, agentId: number = 0) => api.get(`/api/visualization/${expId}/q-value-map?agent_id=${agentId}`),
-  getLearningCurves: (expId: number) => api.get(`/api/visualization/${expId}/learning-curves`),
+  getLearningCurves: (expId: number, offset = 0, limit = 0) => {
+    let url = `/api/visualization/${expId}/learning-curves?offset=${offset}`;
+    if (limit > 0) url += `&limit=${limit}`;
+    return api.get(url);
+  },
   compareCurves: (expIds: number[]) => api.get(`/api/visualization/compare-curves?exp_ids=${expIds.join(',')}`),
 };
 

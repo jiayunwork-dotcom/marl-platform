@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.database import get_db
 from app.models.models import Experiment, TrainingLog, Evaluation, Environment, Checkpoint
@@ -145,11 +145,27 @@ async def compare_experiments(data: ComparisonRequest, db: AsyncSession = Depend
 
 
 @router.get("/{exp_id}/learning-curves")
-async def get_learning_curves(exp_id: int, db: AsyncSession = Depends(get_db)):
-    logs = await db.execute(
-        select(TrainingLog).where(TrainingLog.experiment_id == exp_id)
+async def get_learning_curves(
+    exp_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(0, ge=0, le=100000),
+    db: AsyncSession = Depends(get_db),
+):
+    count_q = select(func.count(TrainingLog.id)).where(
+        TrainingLog.experiment_id == exp_id
+    )
+    total_result = await db.execute(count_q)
+    total_count = total_result.scalar() or 0
+
+    q = (
+        select(TrainingLog)
+        .where(TrainingLog.experiment_id == exp_id)
         .order_by(TrainingLog.episode)
     )
+    if limit > 0:
+        q = q.offset(offset).limit(limit)
+
+    logs = await db.execute(q)
     log_list = logs.scalars().all()
 
     episodes = [l.episode for l in log_list]
@@ -159,6 +175,7 @@ async def get_learning_curves(exp_id: int, db: AsyncSession = Depends(get_db)):
     agent_rewards = [_safe_parse_json(l.agent_rewards) for l in log_list]
 
     return {
+        "total_count": total_count,
         "episodes": episodes,
         "total_rewards": total_rewards,
         "steps": steps,

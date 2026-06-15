@@ -8,7 +8,7 @@ import numpy as np
 from datetime import datetime
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.config import settings
 from app.core.environment import GridWorldEnv
@@ -272,21 +272,30 @@ class TrainingManager:
                 task.status = "completed"
                 await self._save_final(task)
 
+            summary = await self._compute_summary(task)
+
             async with async_session() as session:
                 exp = await session.get(Experiment, task.experiment_id)
                 if exp:
                     exp.status = task.status
                     exp.current_episode = task.current_episode
                     exp.finished_at = datetime.utcnow()
+                    exp.summary = summary
                     await session.commit()
 
         except Exception as e:
             task.status = "error"
+
+            summary = None
+            if len(task.episode_data) >= 50:
+                summary = await self._compute_summary(task)
+
             async with async_session() as session:
                 exp = await session.get(Experiment, task.experiment_id)
                 if exp:
                     exp.status = "error"
                     exp.finished_at = datetime.utcnow()
+                    exp.summary = summary
                     await session.commit()
             import traceback
             traceback.print_exc()
@@ -335,6 +344,60 @@ class TrainingManager:
         state["env_config"] = task.env_config
         state["algo_config"] = task.algorithm_config
         torch.save(state, filepath)
+
+    async def _compute_summary(self, task: TrainingTask) -> dict:
+        async with async_session() as session:
+            total_q = await session.execute(
+                select(func.count(TrainingLog.id)).where(
+                    TrainingLog.experiment_id == task.experiment_id
+                )
+            )
+            total_logs = total_q.scalar() or 0
+
+            if total_logs < 50:
+                return {}
+
+            logs_q = await session.execute(
+                select(TrainingLog)
+                .where(TrainingLog.experiment_id == task.experiment_id)
+                .order_by(TrainingLog.episode.desc())
+                .limit(50)
+            )
+            recent_logs = list(reversed(logs_q.scalars().all()))
+
+            last_50_rewards = [l.total_reward for l in recent_logs]
+            final_avg_reward = float(np.mean(last_50_rewards))
+
+            all_logs_q = await session.execute(
+                select(TrainingLog.total_reward)
+                .where(TrainingLog.experiment_id == task.experiment_id)
+                .order_by(TrainingLog.episode)
+            )
+            all_rewards = [r for (r,) in all_logs_q.all()]
+            max_reward = float(max(all_rewards)) if all_rewards else 0.0
+
+            convergence_episode = None
+            threshold = final_avg_reward * 0.8
+            n_total = len(all_rewards)
+            if n_total >= 20:
+                for start in range(n_total - 19):
+                    window = all_rewards[start:start + 20]
+                    window_avg = float(np.mean(window))
+                    if window_avg >= threshold:
+                        convergence_episode = start + 1
+                        break
+
+            exp = await session.get(Experiment, task.experiment_id)
+            total_duration = None
+            if exp and exp.started_at and exp.finished_at:
+                total_duration = (exp.finished_at - exp.started_at).total_seconds()
+
+        return {
+            "final_avg_reward": round(final_avg_reward, 4),
+            "max_episode_reward": round(max_reward, 4),
+            "convergence_episode": convergence_episode,
+            "total_duration_seconds": total_duration,
+        }
 
     def get_task(self, experiment_id: int) -> Optional[TrainingTask]:
         if experiment_id in self.active_tasks:

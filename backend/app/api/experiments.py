@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.database import get_db
 from app.models.models import Experiment as ExpModel, TrainingLog, Checkpoint, Environment
@@ -142,13 +142,54 @@ async def stop_training(exp_id: int):
     return {"status": "stopped"}
 
 
-@router.get("/{exp_id}/logs", response_model=list[TrainingLogResponse])
-async def get_training_logs(exp_id: int, skip: int = 0, limit: int = 100, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(TrainingLog).where(TrainingLog.experiment_id == exp_id)
-        .order_by(TrainingLog.episode).offset(skip).limit(limit)
+@router.get("/{exp_id}/logs")
+async def get_training_logs(
+    exp_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=10000),
+    min_episode: int = Query(None, ge=0),
+    max_episode: int = Query(None, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    conditions = [TrainingLog.experiment_id == exp_id]
+    if min_episode is not None:
+        conditions.append(TrainingLog.episode >= min_episode)
+    if max_episode is not None:
+        conditions.append(TrainingLog.episode <= max_episode)
+
+    count_q = select(func.count(TrainingLog.id)).where(*conditions)
+    total_result = await db.execute(count_q)
+    total_count = total_result.scalar() or 0
+
+    q = (
+        select(TrainingLog)
+        .where(*conditions)
+        .order_by(TrainingLog.episode)
+        .offset(offset)
+        .limit(limit)
     )
-    return result.scalars().all()
+    result = await db.execute(q)
+    logs = result.scalars().all()
+
+    return {
+        "total_count": total_count,
+        "offset": offset,
+        "limit": limit,
+        "logs": [
+            {
+                "id": l.id,
+                "experiment_id": l.experiment_id,
+                "episode": l.episode,
+                "total_reward": l.total_reward,
+                "agent_rewards": _safe_parse_json(l.agent_rewards),
+                "steps": l.steps,
+                "goal_reached": l.goal_reached,
+                "win_rate": l.win_rate,
+                "timestamp": l.timestamp.isoformat() if l.timestamp else None,
+            }
+            for l in logs
+        ],
+    }
 
 
 @router.get("/{exp_id}/progress")
