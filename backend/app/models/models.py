@@ -97,6 +97,7 @@ class PolicyService(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(sa.String(200))
+    version: Mapped[int] = mapped_column(sa.Integer, default=1)
     experiment_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("experiments.id"))
     checkpoint_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("checkpoints.id"))
     max_concurrent: Mapped[int] = mapped_column(sa.Integer, default=10)

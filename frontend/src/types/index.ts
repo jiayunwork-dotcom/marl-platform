@@ -160,6 +160,7 @@ export interface CompareCurveItem {
 export interface PolicyService {
   id: number;
   name: string;
+  version: number;
   experiment_id: number;
   checkpoint_id: number;
   max_concurrent: number;
@@ -169,6 +170,15 @@ export interface PolicyService {
   created_at: string;
   started_at: string | null;
   stopped_at: string | null;
+}
+
+export interface PolicyServiceDetail extends PolicyService {
+  history_versions: PolicyService[];
+}
+
+export interface PolicyServiceGroup {
+  name: string;
+  versions: PolicyService[];
 }
 
 export interface InferenceLog {
@@ -194,6 +204,7 @@ export interface InferenceStats {
   p95_latency_ms: number;
   timeout_rate: number;
   qps_last_hour: number;
+  cache_hit_rate: number;
 }
 
 export interface CheckpointItem {
@@ -201,4 +212,28 @@ export interface CheckpointItem {
   episode: number;
   filepath: string;
   created_at: string;
+}
+
+export interface ABTestPolicyResult {
+  policy_id: number;
+  actions?: number[];
+  q_values?: number[][];
+  latency_ms: number;
+  timeout: boolean;
+  error?: string | null;
+  cached?: boolean;
+}
+
+export interface ABTestResponse {
+  policy_a: ABTestPolicyResult;
+  policy_b: ABTestPolicyResult;
+  diff_rate: number;
+}
+
+export interface PolicyResourceStats {
+  policy_id: number;
+  current_concurrent: number;
+  max_concurrent: number;
+  queue_depth: number;
+  avg_latency_1min: number;
 }

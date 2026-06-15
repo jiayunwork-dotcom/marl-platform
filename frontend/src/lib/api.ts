@@ -62,6 +62,7 @@ export const algorithmApi = {
 
 export const policyApi = {
   list: () => api.get('/api/policies'),
+  listGrouped: () => api.get('/api/policies/grouped'),
   get: (id: number) => api.get(`/api/policies/${id}`),
   create: (data: any) => api.post('/api/policies', data),
   start: (id: number) => api.post(`/api/policies/${id}/start`),
@@ -75,6 +76,8 @@ export const policyApi = {
     return api.get(url);
   },
   getStats: (id: number) => api.get(`/api/policies/${id}/stats`),
+  getResourceStats: (id: number) => api.get(`/api/policies/${id}/resource-stats`),
+  abTest: (data: any) => api.post('/api/policies/ab-test', data),
 };
 
 export default api;

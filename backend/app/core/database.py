@@ -35,7 +35,27 @@ async def _migrate_summary_column():
         print(f"  [migrate] Warning: Could not migrate summary column: {e}")
 
 
+async def _migrate_policy_version_column():
+    """Add version column to policy_services table if it doesn't exist (idempotent)."""
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'policy_services' AND column_name = 'version'")
+            )
+            row = result.fetchone()
+            if row is None:
+                await conn.execute(
+                    text("ALTER TABLE policy_services ADD COLUMN version INTEGER DEFAULT 1 NOT NULL")
+                )
+                print("  [migrate] Added 'version' column to policy_services table")
+            else:
+                print("  [migrate] 'version' column already exists, skipping")
+    except Exception as e:
+        print(f"  [migrate] Warning: Could not migrate policy version column: {e}")
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_summary_column()
+    await _migrate_policy_version_column()

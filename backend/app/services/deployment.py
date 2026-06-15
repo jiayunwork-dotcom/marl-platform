@@ -2,11 +2,14 @@ import asyncio
 import ast
 import json
 import logging
+import hashlib
 import time
 import numpy as np
 import torch
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Optional
+from threading import Lock
 
 from app.core.config import settings
 from app.core.environment import GridWorldEnv
@@ -15,6 +18,9 @@ from app.models.models import PolicyService, InferenceLog, Checkpoint, Experimen
 from app.core.database import async_session
 
 logger = logging.getLogger(__name__)
+
+CACHE_TTL_SECONDS = 30
+CACHE_MAX_ENTRIES = 100
 
 
 def _safe_parse_json(value):
@@ -38,6 +44,55 @@ def _safe_parse_json(value):
     return {}
 
 
+def _obs_cache_key(observations: list, communication_context=None) -> str:
+    obs_str = json.dumps(observations, sort_keys=True)
+    ctx_str = json.dumps(communication_context, sort_keys=True) if communication_context else ""
+    combined = f"{obs_str}|{ctx_str}"
+    return hashlib.md5(combined.encode()).hexdigest()
+
+
+class LRUCache:
+    def __init__(self, capacity: int, ttl_seconds: int):
+        self.capacity = capacity
+        self.ttl_seconds = ttl_seconds
+        self.cache: OrderedDict[str, tuple[dict, float]] = OrderedDict()
+        self.hits = 0
+        self.total = 0
+        self._lock = Lock()
+
+    def get(self, key: str) -> Optional[dict]:
+        with self._lock:
+            self.total += 1
+            if key not in self.cache:
+                return None
+            value, timestamp = self.cache[key]
+            if time.time() - timestamp > self.ttl_seconds:
+                del self.cache[key]
+                return None
+            self.cache.move_to_end(key)
+            self.hits += 1
+            return value
+
+    def put(self, key: str, value: dict):
+        with self._lock:
+            if key in self.cache:
+                self.cache.move_to_end(key)
+            self.cache[key] = (value, time.time())
+            if len(self.cache) > self.capacity:
+                self.cache.popitem(last=False)
+
+    def hit_rate(self) -> float:
+        with self._lock:
+            if self.total == 0:
+                return 0.0
+            return self.hits / self.total
+
+    def reset_stats(self):
+        with self._lock:
+            self.hits = 0
+            self.total = 0
+
+
 class DeployedPolicy:
     def __init__(self, policy_id: int, algorithm, env_config: dict, algo_config: dict, n_agents: int, obs_shape: tuple, n_actions: int):
         self.policy_id = policy_id
@@ -50,8 +105,46 @@ class DeployedPolicy:
         self.health_check_failures = 0
         self.last_health_check_time: Optional[datetime] = None
         self.last_error: Optional[str] = None
+        self.cache = LRUCache(CACHE_MAX_ENTRIES, CACHE_TTL_SECONDS)
+        self.current_concurrent = 0
+        self.queue_depth = 0
+        self._concurrent_lock = Lock()
+        self.recent_latencies: list[tuple[float, float]] = []
+
+    def _add_latency(self, latency_ms: float):
+        now = time.time()
+        with self._concurrent_lock:
+            self.recent_latencies.append((now, latency_ms))
+            cutoff = now - 60
+            self.recent_latencies = [(t, l) for t, l in self.recent_latencies if t >= cutoff]
+
+    def get_avg_latency_1min(self) -> float:
+        with self._concurrent_lock:
+            if not self.recent_latencies:
+                return 0.0
+            return sum(l for _, l in self.recent_latencies) / len(self.recent_latencies)
+
+    def acquire_concurrent(self) -> bool:
+        with self._concurrent_lock:
+            if self.current_concurrent < 1000:
+                self.current_concurrent += 1
+                return True
+            self.queue_depth += 1
+            return False
+
+    def release_concurrent(self):
+        with self._concurrent_lock:
+            if self.queue_depth > 0:
+                self.queue_depth -= 1
+            else:
+                self.current_concurrent = max(0, self.current_concurrent - 1)
 
     def infer(self, observations: list, communication_context=None) -> dict:
+        cache_key = _obs_cache_key(observations, communication_context)
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return {**cached, "cached": True}
+
         obs_list = []
         for obs in observations:
             arr = np.array(obs, dtype=np.float32)
@@ -69,7 +162,9 @@ class DeployedPolicy:
         except Exception:
             pass
 
-        return {"actions": actions, "q_values": q_values}
+        result = {"actions": actions, "q_values": q_values, "cached": False}
+        self.cache.put(cache_key, result)
+        return result
 
     def health_check(self) -> bool:
         try:
@@ -190,6 +285,18 @@ class PolicyDeploymentManager:
 
     def get_deployed(self, policy_id: int) -> Optional[DeployedPolicy]:
         return self.deployed.get(policy_id)
+
+    def get_resource_stats(self, policy_id: int) -> Optional[dict]:
+        deployed = self.deployed.get(policy_id)
+        if deployed is None:
+            return None
+        return {
+            "policy_id": policy_id,
+            "current_concurrent": deployed.current_concurrent,
+            "max_concurrent": 0,
+            "queue_depth": deployed.queue_depth,
+            "avg_latency_1min": deployed.get_avg_latency_1min(),
+        }
 
     def start_health_checks(self):
         if not self._running:

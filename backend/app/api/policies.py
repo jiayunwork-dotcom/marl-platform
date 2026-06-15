@@ -1,20 +1,27 @@
 import asyncio
+import json
 import time
 from typing import Optional
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 
 from app.core.database import get_db
 from app.models.models import PolicyService, InferenceLog, Checkpoint, Experiment
 from app.schemas.schemas import (
     PolicyServiceCreate,
     PolicyServiceResponse,
+    PolicyServiceDetailResponse,
+    PolicyServiceGroupItem,
     InferenceRequest,
     InferenceResponse,
     InferenceLogResponse,
     InferenceStatsResponse,
+    ABTestRequest,
+    ABTestResponse,
+    ABTestPolicyResult,
+    PolicyResourceStats,
 )
 from app.services.deployment import deployment_manager
 
@@ -34,8 +41,15 @@ async def create_policy_service(data: PolicyServiceCreate, db: AsyncSession = De
     if checkpoint.experiment_id != data.experiment_id:
         raise HTTPException(400, "Checkpoint does not belong to the specified experiment")
 
+    max_version_q = await db.execute(
+        select(func.max(PolicyService.version)).where(PolicyService.name == data.name)
+    )
+    max_version = max_version_q.scalar() or 0
+    next_version = max_version + 1
+
     policy = PolicyService(
         name=data.name,
+        version=next_version,
         experiment_id=data.experiment_id,
         checkpoint_id=data.checkpoint_id,
         max_concurrent=data.max_concurrent,
@@ -56,12 +70,73 @@ async def list_policy_services(skip: int = 0, limit: int = 50, db: AsyncSession 
     return result.scalars().all()
 
 
-@router.get("/{policy_id}", response_model=PolicyServiceResponse)
+@router.get("/grouped", response_model=list[PolicyServiceGroupItem])
+async def list_policy_services_grouped(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(
+        select(PolicyService).order_by(PolicyService.name.asc(), PolicyService.version.desc())
+    )
+    all_policies = result.scalars().all()
+
+    groups: dict[str, list[PolicyService]] = {}
+    for policy in all_policies:
+        if policy.name not in groups:
+            groups[policy.name] = []
+        groups[policy.name].append(policy)
+
+    return [
+        PolicyServiceGroupItem(name=name, versions=policies)
+        for name, policies in groups.items()
+    ]
+
+
+@router.get("/{policy_id}", response_model=PolicyServiceDetailResponse)
 async def get_policy_service(policy_id: int, db: AsyncSession = Depends(get_db)):
     policy = await db.get(PolicyService, policy_id)
     if not policy:
         raise HTTPException(404, "Policy service not found")
-    return policy
+
+    history_q = await db.execute(
+        select(PolicyService)
+        .where(and_(PolicyService.name == policy.name, PolicyService.id != policy_id))
+        .order_by(PolicyService.version.desc())
+    )
+    history_versions = history_q.scalars().all()
+
+    return PolicyServiceDetailResponse(
+        id=policy.id,
+        name=policy.name,
+        version=policy.version,
+        experiment_id=policy.experiment_id,
+        checkpoint_id=policy.checkpoint_id,
+        max_concurrent=policy.max_concurrent,
+        timeout_ms=policy.timeout_ms,
+        status=policy.status,
+        error_reason=policy.error_reason,
+        created_at=policy.created_at,
+        started_at=policy.started_at,
+        stopped_at=policy.stopped_at,
+        history_versions=history_versions,
+    )
+
+
+@router.get("/{policy_id}/resource-stats", response_model=PolicyResourceStats)
+async def get_policy_resource_stats(policy_id: int, db: AsyncSession = Depends(get_db)):
+    policy = await db.get(PolicyService, policy_id)
+    if not policy:
+        raise HTTPException(404, "Policy service not found")
+
+    stats = deployment_manager.get_resource_stats(policy_id)
+    if stats is None:
+        return PolicyResourceStats(
+            policy_id=policy_id,
+            current_concurrent=0,
+            max_concurrent=policy.max_concurrent,
+            queue_depth=0,
+            avg_latency_1min=0.0,
+        )
+
+    stats["max_concurrent"] = policy.max_concurrent
+    return PolicyResourceStats(**stats)
 
 
 @router.post("/{policy_id}/start")
@@ -121,69 +196,171 @@ async def delete_policy_service(policy_id: int, db: AsyncSession = Depends(get_d
     return {"status": "deleted", "policy_id": policy_id}
 
 
-@router.post("/{policy_id}/infer", response_model=InferenceResponse)
-async def infer_policy(policy_id: int, data: InferenceRequest, db: AsyncSession = Depends(get_db)):
+async def _do_inference(policy_id: int, data: InferenceRequest, db: AsyncSession):
     policy = await db.get(PolicyService, policy_id)
     if not policy:
-        raise HTTPException(404, "Policy service not found")
+        return ABTestPolicyResult(
+            policy_id=policy_id,
+            latency_ms=0,
+            timeout=False,
+            error="Policy service not found",
+        )
     if policy.status != "running":
-        raise HTTPException(400, f"Policy service is not running (status={policy.status})")
+        return ABTestPolicyResult(
+            policy_id=policy_id,
+            latency_ms=0,
+            timeout=False,
+            error=f"Policy service is not running (status={policy.status})",
+        )
 
     deployed = deployment_manager.get_deployed(policy_id)
     if deployed is None:
-        raise HTTPException(500, "Deployed model not found in memory")
+        return ABTestPolicyResult(
+            policy_id=policy_id,
+            latency_ms=0,
+            timeout=False,
+            error="Deployed model not found in memory",
+        )
 
     if len(data.observations) != deployed.n_agents:
-        raise HTTPException(
-            400,
-            f"Expected {deployed.n_agents} agent observations, got {len(data.observations)}",
+        return ABTestPolicyResult(
+            policy_id=policy_id,
+            latency_ms=0,
+            timeout=False,
+            error=f"Expected {deployed.n_agents} agent observations, got {len(data.observations)}",
         )
 
-    start_time = time.time()
-    is_timeout = False
-    actions = []
-    q_values = None
-
+    deployed.acquire_concurrent()
     try:
-        loop = asyncio.get_event_loop()
-        timeout_sec = policy.timeout_ms / 1000.0
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, deployed.infer, data.observations, data.communication_context),
-            timeout=timeout_sec,
-        )
-        actions = result["actions"]
-        q_values = result.get("q_values")
-    except asyncio.TimeoutError:
-        is_timeout = True
-        actions = [0] * deployed.n_agents
-    except Exception as e:
+        start_time = time.time()
         is_timeout = False
-        actions = [0] * deployed.n_agents
-        policy_db = await db.get(PolicyService, policy_id)
-        if policy_db and policy_db.status == "running":
-            policy_db.error_reason = str(e)
-            await db.commit()
+        actions = []
+        q_values = None
+        error_msg = None
+        is_cached = False
 
-    latency_ms = (time.time() - start_time) * 1000.0
+        try:
+            loop = asyncio.get_event_loop()
+            timeout_sec = policy.timeout_ms / 1000.0
+            result = await asyncio.wait_for(
+                loop.run_in_executor(None, deployed.infer, data.observations, data.communication_context),
+                timeout=timeout_sec,
+            )
+            actions = result["actions"]
+            q_values = result.get("q_values")
+            is_cached = result.get("cached", False)
+        except asyncio.TimeoutError:
+            is_timeout = True
+            actions = [0] * deployed.n_agents
+        except Exception as e:
+            error_msg = str(e)
+            actions = [0] * deployed.n_agents
 
-    obs_dims = ",".join(str(len(o)) for o in data.observations)
-    output_actions_str = ",".join(str(a) for a in actions)
+        latency_ms = (time.time() - start_time) * 1000.0
 
-    log = InferenceLog(
-        policy_service_id=policy_id,
-        request_time=datetime.utcnow(),
-        latency_ms=round(latency_ms, 2),
-        obs_dimensions=obs_dims,
-        output_actions=output_actions_str,
-        is_timeout=is_timeout,
+        if not is_cached:
+            deployed._add_latency(latency_ms)
+
+        obs_dims = ",".join(str(len(o)) for o in data.observations)
+        output_actions_str = ",".join(str(a) for a in actions)
+
+        log = InferenceLog(
+            policy_service_id=policy_id,
+            request_time=datetime.utcnow(),
+            latency_ms=round(latency_ms, 2),
+            obs_dimensions=obs_dims,
+            output_actions=output_actions_str,
+            is_timeout=is_timeout,
+        )
+        db.add(log)
+        await db.commit()
+
+        if is_timeout:
+            return ABTestPolicyResult(
+                policy_id=policy_id,
+                latency_ms=round(latency_ms, 2),
+                timeout=True,
+                error=None,
+                cached=is_cached,
+            )
+
+        if error_msg:
+            return ABTestPolicyResult(
+                policy_id=policy_id,
+                latency_ms=round(latency_ms, 2),
+                timeout=False,
+                error=error_msg,
+                cached=is_cached,
+            )
+
+        return ABTestPolicyResult(
+            policy_id=policy_id,
+            actions=actions,
+            q_values=q_values,
+            latency_ms=round(latency_ms, 2),
+            timeout=False,
+            error=None,
+            cached=is_cached,
+        )
+    finally:
+        deployed.release_concurrent()
+
+
+@router.post("/{policy_id}/infer", response_model=InferenceResponse)
+async def infer_policy(policy_id: int, data: InferenceRequest, db: AsyncSession = Depends(get_db)):
+    result = await _do_inference(policy_id, data, db)
+
+    if result.timeout:
+        raise HTTPException(408, f"Inference timeout")
+    if result.error:
+        raise HTTPException(500, result.error)
+
+    return InferenceResponse(
+        actions=result.actions or [],
+        q_values=result.q_values,
+        cached=result.cached,
+        latency_ms=result.latency_ms,
     )
-    db.add(log)
-    await db.commit()
 
-    if is_timeout:
-        raise HTTPException(408, f"Inference timeout after {policy.timeout_ms}ms")
 
-    return InferenceResponse(actions=actions, q_values=q_values)
+@router.post("/ab-test", response_model=ABTestResponse)
+async def ab_test_policies(data: ABTestRequest, db: AsyncSession = Depends(get_db)):
+    if data.policy_a == data.policy_b:
+        raise HTTPException(400, "Policy A and Policy B must be different")
+
+    policy_a = await db.get(PolicyService, data.policy_a)
+    policy_b = await db.get(PolicyService, data.policy_b)
+
+    if not policy_a:
+        raise HTTPException(404, f"Policy A (id={data.policy_a}) not found")
+    if not policy_b:
+        raise HTTPException(404, f"Policy B (id={data.policy_b}) not found")
+
+    if policy_a.status != "running":
+        raise HTTPException(400, f"Policy A is not running (status={policy_a.status})")
+    if policy_b.status != "running":
+        raise HTTPException(400, f"Policy B is not running (status={policy_b.status})")
+
+    infer_req = InferenceRequest(
+        observations=data.observations,
+        communication_context=data.communication_context,
+    )
+
+    result_a, result_b = await asyncio.gather(
+        _do_inference(data.policy_a, infer_req, db),
+        _do_inference(data.policy_b, infer_req, db),
+    )
+
+    diff_rate = 0.0
+    if result_a.actions and result_b.actions and len(result_a.actions) == len(result_b.actions):
+        diff_count = sum(1 for a, b in zip(result_a.actions, result_b.actions) if a != b)
+        diff_rate = diff_count / len(result_a.actions) if len(result_a.actions) > 0 else 0.0
+
+    return ABTestResponse(
+        policy_a=result_a,
+        policy_b=result_b,
+        diff_rate=round(diff_rate, 4),
+    )
 
 
 @router.get("/{policy_id}/logs")
@@ -193,6 +370,7 @@ async def get_inference_logs(
     limit: int = Query(50, ge=1, le=500),
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None),
+    include_observations: bool = Query(False),
     db: AsyncSession = Depends(get_db),
 ):
     policy = await db.get(PolicyService, policy_id)
@@ -259,7 +437,12 @@ async def get_inference_stats(policy_id: int, db: AsyncSession = Depends(get_db)
 
     if total_count == 0:
         return InferenceStatsResponse(
-            total_count=0, avg_latency_ms=0.0, p95_latency_ms=0.0, timeout_rate=0.0, qps_last_hour=0.0
+            total_count=0,
+            avg_latency_ms=0.0,
+            p95_latency_ms=0.0,
+            timeout_rate=0.0,
+            qps_last_hour=0.0,
+            cache_hit_rate=0.0,
         )
 
     avg_q = await db.execute(
@@ -293,10 +476,14 @@ async def get_inference_stats(policy_id: int, db: AsyncSession = Depends(get_db)
     recent_count = recent_q.scalar() or 0
     qps_last_hour = round(recent_count / 3600.0, 4)
 
+    deployed = deployment_manager.get_deployed(policy_id)
+    cache_hit_rate = deployed.cache.hit_rate() if deployed else 0.0
+
     return InferenceStatsResponse(
         total_count=total_count,
         avg_latency_ms=round(avg_latency, 2),
         p95_latency_ms=round(p95_latency, 2),
         timeout_rate=timeout_rate,
         qps_last_hour=qps_last_hour,
+        cache_hit_rate=round(cache_hit_rate, 4),
     )

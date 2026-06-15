@@ -243,6 +243,7 @@ class PolicyServiceCreate(BaseModel):
 class PolicyServiceResponse(BaseModel):
     id: int
     name: str
+    version: int
     experiment_id: int
     checkpoint_id: int
     max_concurrent: int
@@ -256,6 +257,15 @@ class PolicyServiceResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PolicyServiceDetailResponse(PolicyServiceResponse):
+    history_versions: list[PolicyServiceResponse] = []
+
+
+class PolicyServiceGroupItem(BaseModel):
+    name: str
+    versions: list[PolicyServiceResponse]
+
+
 class InferenceRequest(BaseModel):
     observations: list[list[float]]
     communication_context: Optional[list[float]] = None
@@ -264,6 +274,8 @@ class InferenceRequest(BaseModel):
 class InferenceResponse(BaseModel):
     actions: list[int]
     q_values: Optional[list[list[float]]] = None
+    cached: bool = False
+    latency_ms: float = 0.0
 
 
 class InferenceLogResponse(BaseModel):
@@ -274,6 +286,7 @@ class InferenceLogResponse(BaseModel):
     obs_dimensions: str
     output_actions: str
     is_timeout: bool
+    observations: Optional[list[list[float]]] = None
 
     model_config = {"from_attributes": True}
 
@@ -284,3 +297,35 @@ class InferenceStatsResponse(BaseModel):
     p95_latency_ms: float
     timeout_rate: float
     qps_last_hour: float
+    cache_hit_rate: float = 0.0
+
+
+class ABTestRequest(BaseModel):
+    policy_a: int
+    policy_b: int
+    observations: list[list[float]]
+    communication_context: Optional[list[float]] = None
+
+
+class ABTestPolicyResult(BaseModel):
+    policy_id: int
+    actions: Optional[list[int]] = None
+    q_values: Optional[list[list[float]]] = None
+    latency_ms: float
+    timeout: bool = False
+    error: Optional[str] = None
+    cached: bool = False
+
+
+class ABTestResponse(BaseModel):
+    policy_a: ABTestPolicyResult
+    policy_b: ABTestPolicyResult
+    diff_rate: float
+
+
+class PolicyResourceStats(BaseModel):
+    policy_id: int
+    current_concurrent: int
+    max_concurrent: int
+    queue_depth: int
+    avg_latency_1min: float
