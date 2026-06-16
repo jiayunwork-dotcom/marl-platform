@@ -243,6 +243,7 @@ export interface ExperimentTemplate {
   id: number;
   name: string;
   description: string;
+  tags: string[];
   algorithm: string;
   hyperparams: Record<string, any>;
   communication_enabled: boolean;
@@ -250,6 +251,9 @@ export interface ExperimentTemplate {
   agent_count: number;
   total_episodes: number;
   param_variables: Record<string, any[]>;
+  version_number: number;
+  is_current_version: boolean;
+  parent_template_id: number | null;
   created_at: string;
 }
 
@@ -257,13 +261,16 @@ export interface BatchRun {
   id: number;
   name: string;
   template_id: number;
+  template_version: number;
   status: 'pending' | 'running' | 'completed' | 'failed';
+  max_parallel: number;
   experiment_ids: number[];
   current_index: number;
   param_combinations: Record<string, any>[];
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  last_progress_at: string | null;
   error_message: string | null;
   is_cancelled: boolean;
 }
@@ -271,6 +278,8 @@ export interface BatchRun {
 export interface BatchRunStats {
   batch_run_id: number;
   status: string;
+  max_parallel: number;
+  template_version: number;
   total_experiments: number;
   completed_count: number;
   running_count: number;
@@ -280,6 +289,28 @@ export interface BatchRunStats {
   group_stats: GroupStat[];
   best_combination: BestCombination | null;
   total_duration_seconds: number | null;
+  parallel_coords_data: ParallelCoordsItem[] | null;
+  heatmap_data: HeatmapData | null;
+  is_stale: boolean;
+  last_progress_at: string | null;
+}
+
+export interface ParallelCoordsItem {
+  [key: string]: any;
+  reward: number;
+  is_best: boolean;
+  experiment_id: number;
+}
+
+export interface HeatmapData {
+  var_a: string;
+  var_b: string;
+  var_a_path: string;
+  var_b_path: string;
+  a_values: string[];
+  b_values: string[];
+  matrix: (number | null)[][];
+  available_variables: { path: string; name: string }[];
 }
 
 export interface BatchRunExperiment {
@@ -314,5 +345,6 @@ export interface BestCombination {
 export interface BatchRunPreview {
   total_combinations: number;
   param_combinations: Record<string, any>[];
+  estimated_duration_seconds: number | null;
 }
 

@@ -335,6 +335,7 @@ class PolicyResourceStats(BaseModel):
 class ExperimentTemplateCreate(BaseModel):
     name: str
     description: str = ""
+    tags: list[str] = []
     algorithm: str
     hyperparams: dict[str, Any] = {}
     communication_enabled: bool = False
@@ -347,15 +348,21 @@ class ExperimentTemplateCreate(BaseModel):
 class ExperimentTemplateUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    tags: Optional[list[str]] = None
     param_variables: Optional[dict[str, Any]] = None
     hyperparams: Optional[dict[str, Any]] = None
     total_episodes: Optional[int] = None
+    communication_enabled: Optional[bool] = None
+    environment_id: Optional[int] = None
+    agent_count: Optional[int] = None
+    algorithm: Optional[str] = None
 
 
 class ExperimentTemplateResponse(BaseModel):
     id: int
     name: str
     description: str
+    tags: list[str]
     algorithm: str
     hyperparams: dict
     communication_enabled: bool
@@ -363,6 +370,9 @@ class ExperimentTemplateResponse(BaseModel):
     agent_count: int
     total_episodes: int
     param_variables: dict
+    version_number: int
+    is_current_version: bool
+    parent_template_id: Optional[int] = None
     created_at: datetime
 
     @field_validator("hyperparams", mode="before")
@@ -373,7 +383,31 @@ class ExperimentTemplateResponse(BaseModel):
     @classmethod
     def _pv(cls, v): return _coerce_json_dict(v)
 
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _tags(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    parsed = ast.literal_eval(v)
+                    return parsed if isinstance(parsed, list) else []
+                except (ValueError, SyntaxError):
+                    return []
+        return []
+
     model_config = {"from_attributes": True}
+
+
+class TemplateRollbackRequest(BaseModel):
+    template_id: int
+    version_id: int
 
 
 class CreateTemplateFromExperimentRequest(BaseModel):
@@ -385,19 +419,23 @@ class CreateTemplateFromExperimentRequest(BaseModel):
 class BatchRunCreate(BaseModel):
     template_id: int
     name: str
+    max_parallel: int = Field(default=1, ge=1, le=4)
 
 
 class BatchRunResponse(BaseModel):
     id: int
     name: str
     template_id: int
+    template_version: int
     status: str
+    max_parallel: int
     experiment_ids: list
     current_index: int
     param_combinations: list
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    last_progress_at: Optional[datetime] = None
     error_message: Optional[str] = None
     is_cancelled: bool
 
@@ -414,11 +452,13 @@ class BatchRunResponse(BaseModel):
 
 class BatchRunPreviewRequest(BaseModel):
     template_id: int
+    max_parallel: int = Field(default=1, ge=1, le=4)
 
 
 class BatchRunPreviewResponse(BaseModel):
     total_combinations: int
     param_combinations: list[dict]
+    estimated_duration_seconds: Optional[float] = None
 
 
 class BatchRunStatsResponse(BaseModel):
@@ -433,3 +473,5 @@ class BatchRunStatsResponse(BaseModel):
     group_stats: list[dict]
     best_combination: Optional[dict] = None
     total_duration_seconds: Optional[float] = None
+    parallel_coords_data: Optional[list[dict]] = None
+    heatmap_data: Optional[dict] = None

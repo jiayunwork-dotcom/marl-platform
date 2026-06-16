@@ -2,7 +2,7 @@ import asyncio
 import copy
 import itertools
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 MAX_COMBINATIONS = 50
 MAX_VALUES_PER_VAR = 10
+STALE_THRESHOLD_MINUTES = 5
 
 
 def _get_nested_value(d: dict, path: str) -> Optional[Any]:
@@ -85,16 +86,32 @@ def apply_params_to_hyperparams(hyperparams: dict, param_combination: dict) -> d
     return result
 
 
+def estimate_duration(template: TemplateModel, total_combinations: int, max_parallel: int, db: AsyncSession) -> Optional[float]:
+    return None
+
+
 class BatchRunManager:
     def __init__(self):
         self._running_batches: dict[int, asyncio.Task] = {}
+        self._active_experiments: dict[int, set[int]] = {}
         self._lock = asyncio.Lock()
+
+    async def _get_current_template_version(self, template_id: int, db: AsyncSession) -> int:
+        result = await db.execute(
+            select(TemplateModel).where(
+                TemplateModel.id == template_id,
+                TemplateModel.is_current_version == True,
+            )
+        )
+        current = result.scalar_one_or_none()
+        return current.version_number if current else 1
 
     async def create_batch_run(
         self,
         template_id: int,
         name: str,
         db: AsyncSession,
+        max_parallel: int = 1,
     ) -> BatchRunModel:
         template = await db.get(TemplateModel, template_id)
         if not template:
@@ -113,10 +130,15 @@ class BatchRunManager:
         if len(combinations) > MAX_COMBINATIONS:
             raise ValueError(f"参数组合总数不能超过 {MAX_COMBINATIONS} 个，当前为 {len(combinations)} 个")
 
+        max_parallel = max(1, min(max_parallel, 4))
+        template_version = await self._get_current_template_version(template_id, db)
+
         batch_run = BatchRunModel(
             name=name,
             template_id=template_id,
+            template_version=template_version,
             status="pending",
+            max_parallel=max_parallel,
             experiment_ids=[],
             current_index=0,
             param_combinations=combinations,
@@ -167,13 +189,40 @@ class BatchRunManager:
 
                 batch_run.status = "running"
                 batch_run.started_at = datetime.utcnow()
+                batch_run.last_progress_at = datetime.utcnow()
                 await session.commit()
 
-            task = asyncio.create_task(self._run_batch(batch_run_id))
+            self._active_experiments[batch_run_id] = set()
+            task = asyncio.create_task(self._run_batch_parallel(batch_run_id))
             self._running_batches[batch_run_id] = task
             task.add_done_callback(lambda t: self._on_batch_done(batch_run_id, t))
 
-    async def _run_batch(self, batch_run_id: int):
+    async def resume_batch_run(self, batch_run_id: int):
+        async with self._lock:
+            if batch_run_id in self._running_batches:
+                raise ValueError("Batch run already running")
+
+            async with async_session() as session:
+                batch_run = await session.get(BatchRunModel, batch_run_id)
+                if not batch_run:
+                    raise ValueError("Batch run not found")
+                if batch_run.status == "completed":
+                    raise ValueError("Batch run already completed")
+                if batch_run.is_cancelled:
+                    raise ValueError("Batch run was cancelled")
+
+                batch_run.status = "running"
+                batch_run.last_progress_at = datetime.utcnow()
+                if not batch_run.started_at:
+                    batch_run.started_at = datetime.utcnow()
+                await session.commit()
+
+            self._active_experiments[batch_run_id] = set()
+            task = asyncio.create_task(self._run_batch_parallel(batch_run_id))
+            self._running_batches[batch_run_id] = task
+            task.add_done_callback(lambda t: self._on_batch_done(batch_run_id, t))
+
+    async def _run_batch_parallel(self, batch_run_id: int):
         try:
             async with async_session() as session:
                 batch_run = await session.get(BatchRunModel, batch_run_id)
@@ -190,6 +239,7 @@ class BatchRunManager:
 
                 experiment_ids = batch_run.experiment_ids if isinstance(batch_run.experiment_ids, list) else []
                 param_combinations = batch_run.param_combinations if isinstance(batch_run.param_combinations, list) else []
+                max_parallel = batch_run.max_parallel or 1
 
                 env_config = {
                     "map_config": env.map_config if isinstance(env.map_config, dict) else {},
@@ -211,50 +261,72 @@ class BatchRunManager:
                     "reward_timeout": env.reward_timeout,
                 }
 
-            for i, exp_id in enumerate(experiment_ids):
+            start_index = batch_run.current_index if batch_run.current_index > 0 else 0
+            next_index = start_index
+            completed_count = 0
+            failed_count = 0
+
+            async with self._lock:
+                for idx in range(start_index, min(start_index + max_parallel, len(experiment_ids))):
+                    if idx < len(experiment_ids):
+                        await self._submit_experiment(batch_run_id, idx, experiment_ids[idx], param_combinations, env_config)
+                        next_index = idx + 1
+
+            while True:
+                await asyncio.sleep(2)
+
                 async with async_session() as session:
                     batch_run = await session.get(BatchRunModel, batch_run_id)
                     if not batch_run or batch_run.is_cancelled:
                         break
 
-                    batch_run.current_index = i
-                    await session.commit()
+                finished_experiments = []
+                async with self._lock:
+                    active_set = self._active_experiments.get(batch_run_id, set())
+                    for exp_idx in list(active_set):
+                        if exp_idx < len(experiment_ids):
+                            exp_id = experiment_ids[exp_idx]
+                            task = training_manager.get_task(exp_id)
+                            if not task or task.status in ("completed", "stopped", "error"):
+                                finished_experiments.append((exp_idx, exp_id, task.status if task else "completed"))
+
+                    for exp_idx, exp_id, status in finished_experiments:
+                        self._active_experiments[batch_run_id].discard(exp_idx)
+                        if status == "error":
+                            failed_count += 1
+                        else:
+                            completed_count += 1
+
+                    if next_index < len(experiment_ids):
+                        while len(self._active_experiments.get(batch_run_id, set())) < max_parallel and next_index < len(experiment_ids):
+                            await self._submit_experiment(batch_run_id, next_index, experiment_ids[next_index], param_combinations, env_config)
+                            next_index += 1
 
                 async with async_session() as session:
-                    exp = await session.get(ExpModel, exp_id)
-                    if not exp:
-                        continue
+                    batch_run = await session.get(BatchRunModel, batch_run_id)
+                    if batch_run:
+                        batch_run.current_index = next_index - 1 if next_index > 0 else 0
+                        batch_run.last_progress_at = datetime.utcnow()
+                        await session.commit()
 
-                    combo = param_combinations[i] if i < len(param_combinations) else {}
+                if failed_count > 0:
+                    async with async_session() as session:
+                        batch_run = await session.get(BatchRunModel, batch_run_id)
+                        if batch_run:
+                            batch_run.status = "failed"
+                            batch_run.error_message = f"Experiment failed"
+                            batch_run.finished_at = datetime.utcnow()
+                            await session.commit()
+                    return
 
-                    hyperparams = exp.hyperparams if isinstance(exp.hyperparams, dict) else {}
-                    if "algorithm" not in hyperparams:
-                        hyperparams["algorithm"] = exp.algorithm
-
-                task = TrainingTask(exp_id, env_config, hyperparams, exp.total_episodes)
-                await training_manager.submit_task(task)
-
-                while True:
-                    await asyncio.sleep(2)
-                    current_task = training_manager.get_task(exp_id)
-                    if not current_task:
-                        break
-                    if current_task.status in ("completed", "stopped", "error"):
-                        if current_task.status == "error":
-                            async with async_session() as session:
-                                batch_run = await session.get(BatchRunModel, batch_run_id)
-                                if batch_run:
-                                    batch_run.status = "failed"
-                                    batch_run.error_message = f"Experiment {exp_id} failed"
-                                    batch_run.finished_at = datetime.utcnow()
-                                    await session.commit()
-                            return
-                        break
+                if next_index >= len(experiment_ids) and len(self._active_experiments.get(batch_run_id, set())) == 0:
+                    break
 
             async with async_session() as session:
                 batch_run = await session.get(BatchRunModel, batch_run_id)
                 if batch_run and not batch_run.is_cancelled:
                     batch_run.status = "completed"
+                    batch_run.current_index = len(experiment_ids) - 1
                     batch_run.finished_at = datetime.utcnow()
                     await session.commit()
 
@@ -268,11 +340,29 @@ class BatchRunManager:
                     batch_run.finished_at = datetime.utcnow()
                     await session.commit()
 
+    async def _submit_experiment(self, batch_run_id: int, idx: int, exp_id: int, param_combinations: list, env_config: dict):
+        async with async_session() as session:
+            exp = await session.get(ExpModel, exp_id)
+            if not exp or exp.status in ("completed", "error", "stopped"):
+                return
+
+            combo = param_combinations[idx] if idx < len(param_combinations) else {}
+
+            hyperparams = exp.hyperparams if isinstance(exp.hyperparams, dict) else {}
+            if "algorithm" not in hyperparams:
+                hyperparams["algorithm"] = exp.algorithm
+
+            task = TrainingTask(exp_id, env_config, hyperparams, exp.total_episodes)
+            await training_manager.submit_task(task)
+            self._active_experiments.setdefault(batch_run_id, set()).add(idx)
+
     def _on_batch_done(self, batch_run_id: int, task: asyncio.Task):
         async def _cleanup():
             async with self._lock:
                 if batch_run_id in self._running_batches:
                     del self._running_batches[batch_run_id]
+                if batch_run_id in self._active_experiments:
+                    del self._active_experiments[batch_run_id]
         asyncio.create_task(_cleanup())
 
     async def cancel_batch_run(self, batch_run_id: int):
@@ -298,7 +388,7 @@ class BatchRunManager:
                     exp.status = "stopped"
             await session.commit()
 
-    async def get_batch_stats(self, batch_run_id: int, db: AsyncSession) -> dict:
+    async def get_batch_stats(self, batch_run_id: int, db: AsyncSession, heatmap_var_a: Optional[str] = None, heatmap_var_b: Optional[str] = None) -> dict:
         batch_run = await db.get(BatchRunModel, batch_run_id)
         if not batch_run:
             raise ValueError("Batch run not found")
@@ -383,9 +473,86 @@ class BatchRunManager:
         if batch_run.started_at and batch_run.finished_at:
             total_duration = (batch_run.finished_at - batch_run.started_at).total_seconds()
 
+        parallel_coords_data = None
+        if completed_exps:
+            var_keys = list(param_variables.keys())
+            var_names = [k.split("/")[-1] for k in var_keys]
+            coords = []
+            best_reward = max(e["final_reward"] for e in completed_exps) if completed_exps else 0
+            for exp_data in completed_exps:
+                item = {}
+                for i, key in enumerate(var_keys):
+                    val = exp_data["params"].get(key)
+                    if isinstance(val, (int, float)):
+                        item[var_names[i]] = float(val)
+                    else:
+                        item[var_names[i]] = str(val)
+                item["reward"] = exp_data["final_reward"]
+                item["is_best"] = exp_data["final_reward"] == best_reward
+                item["experiment_id"] = exp_data["id"]
+                coords.append(item)
+            parallel_coords_data = coords
+
+        heatmap_data = None
+        if completed_exps and len(param_variables) >= 2:
+            var_keys = list(param_variables.keys())
+            if heatmap_var_a and heatmap_var_a in param_variables:
+                var_a_path = heatmap_var_a
+            else:
+                var_a_path = var_keys[0]
+            if heatmap_var_b and heatmap_var_b in param_variables:
+                var_b_path = heatmap_var_b
+            else:
+                var_b_path = var_keys[1] if len(var_keys) > 1 else var_keys[0]
+
+            var_a_name = var_a_path.split("/")[-1]
+            var_b_name = var_b_path.split("/")[-1]
+
+            a_values = sorted(param_variables.get(var_a_path, []), key=lambda x: (not isinstance(x, (int, float)), x))
+            b_values = sorted(param_variables.get(var_b_path, []), key=lambda x: (not isinstance(x, (int, float)), x))
+
+            cells = {}
+            for exp_data in completed_exps:
+                a_val = exp_data["params"].get(var_a_path)
+                b_val = exp_data["params"].get(var_b_path)
+                if a_val is not None and b_val is not None and exp_data["final_reward"] is not None:
+                    key = (str(a_val), str(b_val))
+                    if key not in cells:
+                        cells[key] = []
+                    cells[key].append(exp_data["final_reward"])
+
+            matrix = []
+            for a_val in a_values:
+                row = []
+                for b_val in b_values:
+                    key = (str(a_val), str(b_val))
+                    rewards = cells.get(key, [])
+                    avg = sum(rewards) / len(rewards) if rewards else None
+                    row.append(round(avg, 4) if avg is not None else None)
+                matrix.append(row)
+
+            heatmap_data = {
+                "var_a": var_a_name,
+                "var_b": var_b_name,
+                "var_a_path": var_a_path,
+                "var_b_path": var_b_path,
+                "a_values": [str(v) for v in a_values],
+                "b_values": [str(v) for v in b_values],
+                "matrix": matrix,
+                "available_variables": [{"path": k, "name": k.split("/")[-1]} for k in param_variables.keys()],
+            }
+
+        is_stale = False
+        if batch_run.status == "running" and batch_run.last_progress_at:
+            stale_time = datetime.utcnow() - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+            if batch_run.last_progress_at < stale_time:
+                is_stale = True
+
         return {
             "batch_run_id": batch_run.id,
             "status": batch_run.status,
+            "max_parallel": batch_run.max_parallel,
+            "template_version": batch_run.template_version,
             "total_experiments": len(experiment_ids),
             "completed_count": completed_count,
             "running_count": running_count,
@@ -395,7 +562,22 @@ class BatchRunManager:
             "group_stats": group_stats,
             "best_combination": best_combination,
             "total_duration_seconds": total_duration,
+            "parallel_coords_data": parallel_coords_data,
+            "heatmap_data": heatmap_data,
+            "is_stale": is_stale,
+            "last_progress_at": batch_run.last_progress_at.isoformat() if batch_run.last_progress_at else None,
         }
+
+    async def is_batch_stale(self, batch_run_id: int, db: AsyncSession) -> bool:
+        batch_run = await db.get(BatchRunModel, batch_run_id)
+        if not batch_run:
+            return False
+        if batch_run.status != "running":
+            return False
+        if not batch_run.last_progress_at:
+            return True
+        stale_time = datetime.utcnow() - timedelta(minutes=STALE_THRESHOLD_MINUTES)
+        return batch_run.last_progress_at < stale_time
 
 
 batch_run_manager = BatchRunManager()

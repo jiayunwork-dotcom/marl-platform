@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     BatchRunCreate,
     BatchRunResponse,
     BatchRunPreviewResponse,
+    BatchRunStatsResponse,
 )
 from app.services.batch_run import (
     batch_run_manager,
@@ -54,6 +55,7 @@ async def create_batch_run(data: BatchRunCreate, db: AsyncSession = Depends(get_
             template_id=data.template_id,
             name=data.name,
             db=db,
+            max_parallel=data.max_parallel,
         )
         return batch_run
     except ValueError as e:
@@ -93,6 +95,19 @@ async def start_batch_run(batch_run_id: int, db: AsyncSession = Depends(get_db))
         raise HTTPException(400, str(e))
 
 
+@router.post("/{batch_run_id}/resume")
+async def resume_batch_run(batch_run_id: int, db: AsyncSession = Depends(get_db)):
+    batch_run = await db.get(BatchRunModel, batch_run_id)
+    if not batch_run:
+        raise HTTPException(404, "Batch run not found")
+
+    try:
+        await batch_run_manager.resume_batch_run(batch_run_id)
+        return {"status": "resumed", "batch_run_id": batch_run_id}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.post("/{batch_run_id}/cancel")
 async def cancel_batch_run(batch_run_id: int):
     try:
@@ -103,9 +118,14 @@ async def cancel_batch_run(batch_run_id: int):
 
 
 @router.get("/{batch_run_id}/stats")
-async def get_batch_run_stats(batch_run_id: int, db: AsyncSession = Depends(get_db)):
+async def get_batch_run_stats(
+    batch_run_id: int,
+    heatmap_var_a: str = Query(None),
+    heatmap_var_b: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
     try:
-        stats = await batch_run_manager.get_batch_stats(batch_run_id, db)
+        stats = await batch_run_manager.get_batch_stats(batch_run_id, db, heatmap_var_a, heatmap_var_b)
         return stats
     except ValueError as e:
         raise HTTPException(404, str(e))
@@ -117,6 +137,7 @@ async def preview_batch_run(
     db: AsyncSession = Depends(get_db),
 ):
     template_id = data.get("template_id")
+    max_parallel = data.get("max_parallel", 1)
     if not template_id:
         raise HTTPException(400, "template_id is required")
 
@@ -141,9 +162,29 @@ async def preview_batch_run(
             f"参数组合总数不能超过 {MAX_COMBINATIONS} 个，当前为 {len(combinations)} 个",
         )
 
+    estimated_duration = None
+    try:
+        from sqlalchemy import func
+        result = await db.execute(
+            select(func.avg(ExpModel.finished_at - ExpModel.started_at)).where(
+                ExpModel.status == "completed",
+                ExpModel.total_episodes == template.total_episodes,
+                ExpModel.started_at.isnot(None),
+                ExpModel.finished_at.isnot(None),
+            )
+        )
+        avg_duration = result.scalar()
+        if avg_duration is not None:
+            avg_seconds = avg_duration.total_seconds() if hasattr(avg_duration, "total_seconds") else float(avg_duration)
+            max_parallel_val = max(1, min(max_parallel, 4))
+            estimated_duration = avg_seconds * len(combinations) / max_parallel_val
+    except Exception:
+        pass
+
     return {
         "total_combinations": len(combinations),
         "param_combinations": combinations,
+        "estimated_duration_seconds": estimated_duration,
     }
 
 

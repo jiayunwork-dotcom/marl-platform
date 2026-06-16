@@ -81,10 +81,19 @@ export const policyApi = {
 };
 
 export const templateApi = {
-  list: () => api.get('/api/templates'),
+  list: (params?: { tags?: string; keyword?: string }) => {
+    let url = '/api/templates';
+    const qs: string[] = [];
+    if (params?.tags) qs.push(`tags=${encodeURIComponent(params.tags)}`);
+    if (params?.keyword) qs.push(`keyword=${encodeURIComponent(params.keyword)}`);
+    if (qs.length) url += `?${qs.join('&')}`;
+    return api.get(url);
+  },
   get: (id: number) => api.get(`/api/templates/${id}`),
+  getVersions: (id: number) => api.get(`/api/templates/${id}/versions`),
   create: (data: any) => api.post('/api/templates', data),
   update: (id: number, data: any) => api.put(`/api/templates/${id}`, data),
+  rollback: (templateId: number, versionId: number) => api.post(`/api/templates/${templateId}/rollback`, { template_id: templateId, version_id: versionId }),
   delete: (id: number) => api.delete(`/api/templates/${id}`),
   createFromExperiment: (data: any) => api.post('/api/templates/from-experiment', data),
 };
@@ -94,9 +103,17 @@ export const batchRunApi = {
   get: (id: number) => api.get(`/api/batch-runs/${id}`),
   create: (data: any) => api.post('/api/batch-runs', data),
   start: (id: number) => api.post(`/api/batch-runs/${id}/start`),
+  resume: (id: number) => api.post(`/api/batch-runs/${id}/resume`),
   cancel: (id: number) => api.post(`/api/batch-runs/${id}/cancel`),
-  getStats: (id: number) => api.get(`/api/batch-runs/${id}/stats`),
-  preview: (templateId: number) => api.post('/api/batch-runs/preview', { template_id: templateId }),
+  getStats: (id: number, heatmapVarA?: string, heatmapVarB?: string) => {
+    let url = `/api/batch-runs/${id}/stats`;
+    const qs: string[] = [];
+    if (heatmapVarA) qs.push(`heatmap_var_a=${encodeURIComponent(heatmapVarA)}`);
+    if (heatmapVarB) qs.push(`heatmap_var_b=${encodeURIComponent(heatmapVarB)}`);
+    if (qs.length) url += `?${qs.join('&')}`;
+    return api.get(url);
+  },
+  preview: (templateId: number, maxParallel: number = 1) => api.post('/api/batch-runs/preview', { template_id: templateId, max_parallel: maxParallel }),
   listByTemplate: (templateId: number) => api.get(`/api/batch-runs/template/${templateId}`),
 };
 
