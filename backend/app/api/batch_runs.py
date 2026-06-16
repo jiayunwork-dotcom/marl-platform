@@ -1,8 +1,9 @@
 import ast
 import json
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from app.core.database import get_db
 from app.models.models import (
@@ -165,20 +166,31 @@ async def preview_batch_run(
     estimated_duration = None
     try:
         from sqlalchemy import func
+
         result = await db.execute(
-            select(func.avg(ExpModel.finished_at - ExpModel.started_at)).where(
+            select(ExpModel).where(
                 ExpModel.status == "completed",
                 ExpModel.total_episodes == template.total_episodes,
                 ExpModel.started_at.isnot(None),
                 ExpModel.finished_at.isnot(None),
-            )
+            ).limit(100)
         )
-        avg_duration = result.scalar()
-        if avg_duration is not None:
-            avg_seconds = avg_duration.total_seconds() if hasattr(avg_duration, "total_seconds") else float(avg_duration)
-            max_parallel_val = max(1, min(max_parallel, 4))
-            estimated_duration = avg_seconds * len(combinations) / max_parallel_val
-    except Exception:
+        recent_exps = result.scalars().all()
+
+        if recent_exps:
+            total_seconds = 0.0
+            count = 0
+            for exp in recent_exps:
+                if isinstance(exp.started_at, datetime) and isinstance(exp.finished_at, datetime):
+                    delta = (exp.finished_at - exp.started_at).total_seconds()
+                    if delta > 0:
+                        total_seconds += delta
+                        count += 1
+            if count > 0:
+                avg_seconds = total_seconds / count
+                max_parallel_val = max(1, min(int(max_parallel), 4))
+                estimated_duration = avg_seconds * len(combinations) / max_parallel_val
+    except Exception as e:
         pass
 
     return {
@@ -195,9 +207,29 @@ async def list_batch_runs_by_template(
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
 ):
+    current = await db.get(TemplateModel, template_id)
+    if not current:
+        raise HTTPException(404, "Template not found")
+
+    if current.parent_template_id:
+        root_id = current.parent_template_id
+    else:
+        root_id = template_id
+
+    result = await db.execute(
+        select(TemplateModel).where(
+            or_(
+                TemplateModel.id == root_id,
+                TemplateModel.parent_template_id == root_id,
+            )
+        )
+    )
+    all_versions = result.scalars().all()
+    all_version_ids = [v.id for v in all_versions]
+
     result = await db.execute(
         select(BatchRunModel)
-        .where(BatchRunModel.template_id == template_id)
+        .where(BatchRunModel.template_id.in_(all_version_ids))
         .order_by(BatchRunModel.created_at.desc())
         .offset(skip)
         .limit(limit)

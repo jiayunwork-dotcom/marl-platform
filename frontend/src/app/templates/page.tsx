@@ -25,12 +25,15 @@ import {
   Cell,
 } from 'recharts';
 
-function formatDuration(seconds: number | null): string {
-  if (!seconds) return '未知';
-  if (seconds < 60) return `${Math.round(seconds)}秒`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}分钟`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
+function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || isNaN(seconds as number) || (seconds as number) <= 0) {
+    return '暂无历史数据';
+  }
+  const sec = Number(seconds);
+  if (sec < 60) return `${Math.round(sec)}秒`;
+  if (sec < 3600) return `${Math.round(sec / 60)}分钟`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.round((sec % 3600) / 60);
   return `${h}小时${m}分钟`;
 }
 
@@ -924,15 +927,31 @@ export default function TemplatesPage() {
       {showBatchPreview && batchPreview && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-slate-800 rounded-lg p-6 w-[750px] max-h-[85vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-2">批量运行预览</h3>
-            <p className="text-sm text-slate-400 mb-4">
-              共 {batchPreview.total_combinations} 个参数组合
-              {batchPreview.estimated_duration_seconds && (
-                <span className="ml-2 text-blue-400">
-                  · 预估耗时: {formatDuration(batchPreview.estimated_duration_seconds)}
-                </span>
-              )}
-            </p>
+            <h3 className="text-lg font-bold mb-4">批量运行预览</h3>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div className="card">
+                <div className="text-xs text-slate-400 mb-1">参数组合总数</div>
+                <div className="text-2xl font-bold text-white">
+                  {batchPreview.total_combinations}
+                </div>
+              </div>
+              <div className="card">
+                <div className="text-xs text-slate-400 mb-1">预估总耗时</div>
+                <div className="text-2xl font-bold text-blue-400">
+                  {formatDuration(batchPreview.estimated_duration_seconds)}
+                </div>
+                {batchPreview.estimated_duration_seconds && batchPreview.estimated_duration_seconds > 0 && (
+                  <div className="text-xs text-slate-500 mt-1">
+                    基于历史相同回合数实验的平均耗时 × {batchPreview.total_combinations} ÷ 并行度
+                  </div>
+                )}
+                {(!batchPreview.estimated_duration_seconds || batchPreview.estimated_duration_seconds <= 0) && (
+                  <div className="text-xs text-slate-500 mt-1">
+                    完成首个实验后可生成准确预估
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="mb-4">
               <label className="text-sm text-slate-400">批量运行名称</label>

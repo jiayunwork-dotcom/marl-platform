@@ -107,19 +107,28 @@ async def list_templates(
             )
         )
 
+    tag_list = []
     if tags:
         tag_list = [t.strip() for t in tags.split(",") if t.strip()]
-        if tag_list:
-            try:
-                from sqlalchemy import func
-                for tag in tag_list:
-                    query = query.where(func.jsonb_path_exists(TemplateModel.tags, f'$[*] ? (@ == "{tag}")'))
-            except Exception:
-                pass
 
-    query = query.order_by(TemplateModel.created_at.desc()).offset(skip).limit(limit)
+    query = query.order_by(TemplateModel.created_at.desc())
     result = await db.execute(query)
-    return result.scalars().all()
+    all_templates = result.scalars().all()
+
+    if tag_list:
+        filtered = []
+        for t in all_templates:
+            template_tags = t.tags if isinstance(t.tags, list) else []
+            if all(tag in template_tags for tag in tag_list):
+                filtered.append(t)
+        all_templates = filtered
+
+    if skip > 0:
+        all_templates = all_templates[skip:]
+    if limit > 0:
+        all_templates = all_templates[:limit]
+
+    return all_templates
 
 
 @router.get("/{template_id}", response_model=ExperimentTemplateResponse)
