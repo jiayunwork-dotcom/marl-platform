@@ -6,7 +6,7 @@ import traceback
 import logging
 
 from app.core.database import init_db
-from app.api import environments, experiments, evaluations, visualization, reports, policies
+from app.api import environments, experiments, evaluations, visualization, reports, policies, templates, batch_runs
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,8 @@ app.include_router(evaluations.router)
 app.include_router(visualization.router)
 app.include_router(reports.router)
 app.include_router(policies.router)
+app.include_router(templates.router)
+app.include_router(batch_runs.router)
 
 
 @app.get("/api/health")

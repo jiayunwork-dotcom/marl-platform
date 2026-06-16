@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Environment, Experiment, AlgorithmConfig } from '@/types';
-import { experimentApi, environmentApi, algorithmApi } from '@/lib/api';
+import { experimentApi, environmentApi, algorithmApi, templateApi } from '@/lib/api';
 
 const defaultAlgoConfig: AlgorithmConfig = {
   algorithm: 'IQL', learning_rate: 0.001, gamma: 0.99,
@@ -21,6 +21,10 @@ export default function ExperimentsPage() {
   const [selectedEnvId, setSelectedEnvId] = useState<number | null>(null);
   const [totalEpisodes, setTotalEpisodes] = useState(1000);
   const [algoConfig, setAlgoConfig] = useState<AlgorithmConfig>(defaultAlgoConfig);
+  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
+  const [selectedExpForTemplate, setSelectedExpForTemplate] = useState<Experiment | null>(null);
+  const [templateName, setTemplateName] = useState('');
+  const [templateDesc, setTemplateDesc] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
@@ -77,6 +81,30 @@ export default function ExperimentsPage() {
     try { await experimentApi.stop(id); fetchData(); } catch (e) { console.error(e); }
   };
 
+  const handleSaveAsTemplate = (exp: Experiment) => {
+    setSelectedExpForTemplate(exp);
+    setTemplateName(`${exp.name} - 模板`);
+    setTemplateDesc('');
+    setShowSaveTemplate(true);
+  };
+
+  const handleConfirmSaveTemplate = async () => {
+    if (!selectedExpForTemplate || !templateName) return;
+    try {
+      await templateApi.createFromExperiment({
+        experiment_id: selectedExpForTemplate.id,
+        name: templateName,
+        description: templateDesc,
+      });
+      setShowSaveTemplate(false);
+      setSelectedExpForTemplate(null);
+      alert('模板创建成功');
+    } catch (e) {
+      console.error(e);
+      alert('模板创建失败');
+    }
+  };
+
   const statusColors: Record<string, string> = {
     created: 'bg-slate-600', queued: 'bg-yellow-600', running: 'bg-green-600',
     paused: 'bg-orange-600', completed: 'bg-blue-600', stopped: 'bg-red-600', error: 'bg-red-800',
@@ -103,6 +131,11 @@ export default function ExperimentsPage() {
                 <span className={`px-2 py-0.5 rounded text-xs text-white ${statusColors[exp.status] || 'bg-slate-600'}`}>
                   {exp.status}
                 </span>
+                {(exp as any).batch_run_id && (
+                  <span className="px-2 py-0.5 rounded text-xs bg-purple-600/30 text-purple-300">
+                    批量 #{(exp as any).batch_run_id}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-1">
                 {exp.algorithm} | Episode {exp.current_episode}/{exp.total_episodes}
@@ -116,6 +149,7 @@ export default function ExperimentsPage() {
               {(exp.status === 'running' || exp.status === 'paused') && (
                 <button onClick={() => handleStop(exp.id)} className="btn-danger text-sm">终止</button>
               )}
+              <button onClick={() => handleSaveAsTemplate(exp)} className="btn-secondary text-sm">存为模板</button>
             </div>
           </div>
         ))}
@@ -258,6 +292,43 @@ export default function ExperimentsPage() {
             <div className="flex gap-2 mt-4">
               <button onClick={handleCreate} className="btn-primary">创建实验</button>
               <button onClick={() => setIsCreating(false)} className="btn-secondary">取消</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSaveTemplate && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-800 rounded-lg p-6 w-[500px]">
+            <h3 className="text-lg font-bold mb-4">存为模板</h3>
+            <p className="text-sm text-slate-400 mb-4">
+              实验: {selectedExpForTemplate?.name}
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm text-slate-400">模板名称</label>
+                <input
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  className="input-field w-full mt-1"
+                />
+              </div>
+              <div>
+                <label className="text-sm text-slate-400">描述</label>
+                <textarea
+                  value={templateDesc}
+                  onChange={(e) => setTemplateDesc(e.target.value)}
+                  className="input-field w-full mt-1"
+                  rows={3}
+                />
+              </div>
+              <p className="text-xs text-slate-500">
+                参数变量默认为空，可在模板管理页面手动添加
+              </p>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button onClick={handleConfirmSaveTemplate} className="btn-primary">保存模板</button>
+              <button onClick={() => setShowSaveTemplate(false)} className="btn-secondary">取消</button>
             </div>
           </div>
         </div>

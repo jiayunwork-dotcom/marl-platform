@@ -48,6 +48,7 @@ class Experiment(Base):
     status: Mapped[str] = mapped_column(sa.String(50), default="created")
     current_episode: Mapped[int] = mapped_column(sa.Integer, default=0)
     total_episodes: Mapped[int] = mapped_column(sa.Integer, default=1000)
+    batch_run_id: Mapped[Optional[int]] = mapped_column(sa.Integer, sa.ForeignKey("batch_runs.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
     started_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
     finished_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
@@ -119,3 +120,36 @@ class InferenceLog(Base):
     obs_dimensions: Mapped[str] = mapped_column(sa.String(200), default="")
     output_actions: Mapped[str] = mapped_column(sa.String(500), default="")
     is_timeout: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+
+
+class ExperimentTemplate(Base):
+    __tablename__ = "experiment_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(sa.String(200))
+    description: Mapped[str] = mapped_column(sa.Text, default="")
+    algorithm: Mapped[str] = mapped_column(sa.String(50))
+    hyperparams: Mapped[dict[str, Any]] = mapped_column(sa.JSON, default=dict)
+    communication_enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False)
+    environment_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("environments.id"))
+    agent_count: Mapped[int] = mapped_column(sa.Integer, default=2)
+    total_episodes: Mapped[int] = mapped_column(sa.Integer, default=1000)
+    param_variables: Mapped[dict[str, Any]] = mapped_column(sa.JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+
+
+class BatchRun(Base):
+    __tablename__ = "batch_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(sa.String(200))
+    template_id: Mapped[int] = mapped_column(sa.Integer, sa.ForeignKey("experiment_templates.id"))
+    status: Mapped[str] = mapped_column(sa.String(50), default="pending")
+    experiment_ids: Mapped[list[Any]] = mapped_column(sa.JSON, default=list)
+    current_index: Mapped[int] = mapped_column(sa.Integer, default=0)
+    param_combinations: Mapped[list[Any]] = mapped_column(sa.JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(sa.DateTime, default=datetime.utcnow)
+    started_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(sa.DateTime, nullable=True, default=None)
+    error_message: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True, default=None)
+    is_cancelled: Mapped[bool] = mapped_column(sa.Boolean, default=False)

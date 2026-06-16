@@ -154,6 +154,7 @@ class ExperimentResponse(BaseModel):
     status: str
     current_episode: int
     total_episodes: int
+    batch_run_id: Optional[int] = None
     created_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
@@ -329,3 +330,106 @@ class PolicyResourceStats(BaseModel):
     max_concurrent: int
     queue_depth: int
     avg_latency_1min: float
+
+
+class ExperimentTemplateCreate(BaseModel):
+    name: str
+    description: str = ""
+    algorithm: str
+    hyperparams: dict[str, Any] = {}
+    communication_enabled: bool = False
+    environment_id: int
+    agent_count: int = 2
+    total_episodes: int = 1000
+    param_variables: dict[str, Any] = {}
+
+
+class ExperimentTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    param_variables: Optional[dict[str, Any]] = None
+    hyperparams: Optional[dict[str, Any]] = None
+    total_episodes: Optional[int] = None
+
+
+class ExperimentTemplateResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    algorithm: str
+    hyperparams: dict
+    communication_enabled: bool
+    environment_id: int
+    agent_count: int
+    total_episodes: int
+    param_variables: dict
+    created_at: datetime
+
+    @field_validator("hyperparams", mode="before")
+    @classmethod
+    def _hp(cls, v): return _coerce_json_dict(v)
+
+    @field_validator("param_variables", mode="before")
+    @classmethod
+    def _pv(cls, v): return _coerce_json_dict(v)
+
+    model_config = {"from_attributes": True}
+
+
+class CreateTemplateFromExperimentRequest(BaseModel):
+    experiment_id: int
+    name: str
+    description: str = ""
+
+
+class BatchRunCreate(BaseModel):
+    template_id: int
+    name: str
+
+
+class BatchRunResponse(BaseModel):
+    id: int
+    name: str
+    template_id: int
+    status: str
+    experiment_ids: list
+    current_index: int
+    param_combinations: list
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    is_cancelled: bool
+
+    @field_validator("experiment_ids", mode="before")
+    @classmethod
+    def _eids(cls, v): return _coerce_json_list(v)
+
+    @field_validator("param_combinations", mode="before")
+    @classmethod
+    def _pcombs(cls, v): return _coerce_json_list(v)
+
+    model_config = {"from_attributes": True}
+
+
+class BatchRunPreviewRequest(BaseModel):
+    template_id: int
+
+
+class BatchRunPreviewResponse(BaseModel):
+    total_combinations: int
+    param_combinations: list[dict]
+
+
+class BatchRunStatsResponse(BaseModel):
+    batch_run_id: int
+    status: str
+    total_experiments: int
+    completed_count: int
+    running_count: int
+    failed_count: int
+    pending_count: int
+    experiments: list[dict]
+    group_stats: list[dict]
+    best_combination: Optional[dict] = None
+    total_duration_seconds: Optional[float] = None

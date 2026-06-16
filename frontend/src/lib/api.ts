@@ -80,4 +80,24 @@ export const policyApi = {
   abTest: (data: any) => api.post('/api/policies/ab-test', data),
 };
 
+export const templateApi = {
+  list: () => api.get('/api/templates'),
+  get: (id: number) => api.get(`/api/templates/${id}`),
+  create: (data: any) => api.post('/api/templates', data),
+  update: (id: number, data: any) => api.put(`/api/templates/${id}`, data),
+  delete: (id: number) => api.delete(`/api/templates/${id}`),
+  createFromExperiment: (data: any) => api.post('/api/templates/from-experiment', data),
+};
+
+export const batchRunApi = {
+  list: () => api.get('/api/batch-runs'),
+  get: (id: number) => api.get(`/api/batch-runs/${id}`),
+  create: (data: any) => api.post('/api/batch-runs', data),
+  start: (id: number) => api.post(`/api/batch-runs/${id}/start`),
+  cancel: (id: number) => api.post(`/api/batch-runs/${id}/cancel`),
+  getStats: (id: number) => api.get(`/api/batch-runs/${id}/stats`),
+  preview: (templateId: number) => api.post('/api/batch-runs/preview', { template_id: templateId }),
+  listByTemplate: (templateId: number) => api.get(`/api/batch-runs/template/${templateId}`),
+};
+
 export default api;

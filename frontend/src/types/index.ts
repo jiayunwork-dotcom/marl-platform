@@ -80,6 +80,7 @@ export interface Experiment {
   status: string;
   current_episode: number;
   total_episodes: number;
+  batch_run_id: number | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -237,3 +238,81 @@ export interface PolicyResourceStats {
   queue_depth: number;
   avg_latency_1min: number;
 }
+
+export interface ExperimentTemplate {
+  id: number;
+  name: string;
+  description: string;
+  algorithm: string;
+  hyperparams: Record<string, any>;
+  communication_enabled: boolean;
+  environment_id: number;
+  agent_count: number;
+  total_episodes: number;
+  param_variables: Record<string, any[]>;
+  created_at: string;
+}
+
+export interface BatchRun {
+  id: number;
+  name: string;
+  template_id: number;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  experiment_ids: number[];
+  current_index: number;
+  param_combinations: Record<string, any>[];
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error_message: string | null;
+  is_cancelled: boolean;
+}
+
+export interface BatchRunStats {
+  batch_run_id: number;
+  status: string;
+  total_experiments: number;
+  completed_count: number;
+  running_count: number;
+  failed_count: number;
+  pending_count: number;
+  experiments: BatchRunExperiment[];
+  group_stats: GroupStat[];
+  best_combination: BestCombination | null;
+  total_duration_seconds: number | null;
+}
+
+export interface BatchRunExperiment {
+  id: number;
+  name: string;
+  status: string;
+  params: Record<string, any>;
+  final_reward: number | null;
+  max_reward: number | null;
+  current_episode: number;
+  total_episodes: number;
+}
+
+export interface GroupStat {
+  variable: string;
+  groups: VariableGroup[];
+}
+
+export interface VariableGroup {
+  variable: string;
+  value: any;
+  avg_reward: number;
+  count: number;
+}
+
+export interface BestCombination {
+  experiment_id: number;
+  params: Record<string, any>;
+  final_reward: number;
+}
+
+export interface BatchRunPreview {
+  total_combinations: number;
+  param_combinations: Record<string, any>[];
+}
+

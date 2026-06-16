@@ -54,8 +54,28 @@ async def _migrate_policy_version_column():
         print(f"  [migrate] Warning: Could not migrate policy version column: {e}")
 
 
+async def _migrate_batch_run_id_column():
+    """Add batch_run_id column to experiments table if it doesn't exist (idempotent)."""
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(
+                text("SELECT column_name FROM information_schema.columns WHERE table_name = 'experiments' AND column_name = 'batch_run_id'")
+            )
+            row = result.fetchone()
+            if row is None:
+                await conn.execute(
+                    text("ALTER TABLE experiments ADD COLUMN batch_run_id INTEGER REFERENCES batch_runs(id)")
+                )
+                print("  [migrate] Added 'batch_run_id' column to experiments table")
+            else:
+                print("  [migrate] 'batch_run_id' column already exists, skipping")
+    except Exception as e:
+        print(f"  [migrate] Warning: Could not migrate batch_run_id column: {e}")
+
+
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_summary_column()
     await _migrate_policy_version_column()
+    await _migrate_batch_run_id_column()

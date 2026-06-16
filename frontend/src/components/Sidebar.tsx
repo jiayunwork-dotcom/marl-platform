@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 const navItems = [
   { href: '/environments', label: '环境编辑器', icon: '🗺️' },
   { href: '/experiments', label: '实验管理', icon: '🧪' },
+  { href: '/templates', label: '实验模板', icon: '📋' },
   { href: '/training', label: '训练监控', icon: '📊' },
   { href: '/evaluation', label: '评估回放', icon: '▶️' },
   { href: '/visualization', label: '可视化分析', icon: '🔍' },
